@@ -10,6 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/httpclient"
+	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 )
 
 const (
@@ -549,7 +552,16 @@ func writeJSON(path string, value any) error {
 }
 
 func fetchWithETag(url, etag string) (string, string, int, error) {
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	validatedURL, err := urlvalidator.ValidateHTTPSURL(url, urlvalidator.ValidationOptions{
+		AllowedHosts:     []string{"raw.githubusercontent.com"},
+		RequireAllowlist: true,
+		AllowPrivate:     false,
+	})
+	if err != nil {
+		return "", "", 0, fmt.Errorf("invalid url: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodGet, validatedURL, nil)
 	if err != nil {
 		return "", "", 0, err
 	}
@@ -557,7 +569,17 @@ func fetchWithETag(url, etag string) (string, string, int, error) {
 	if etag != "" {
 		req.Header.Set("If-None-Match", etag)
 	}
-	resp, err := http.DefaultClient.Do(req)
+
+	client, err := httpclient.GetClient(httpclient.Options{
+		Timeout:            10 * time.Second,
+		ValidateResolvedIP: true,
+	})
+	if err != nil {
+		client = &http.Client{Timeout: 10 * time.Second}
+	}
+
+	// #nosec G704 -- validatedURL allowlisted to raw.githubusercontent.com (private hosts blocked); resolved IP validated when available
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", "", 0, err
 	}

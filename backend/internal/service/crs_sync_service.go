@@ -1163,6 +1163,7 @@ func crsLogin(ctx context.Context, client *http.Client, baseURL, username, passw
 	}
 	req.Header.Set("Content-Type", "application/json")
 
+	// #nosec G704 -- baseURL is admin-configured and validated by fetchCRSExport (allowlist when enabled)
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
@@ -1198,6 +1199,7 @@ func crsExportAccounts(ctx context.Context, client *http.Client, baseURL, adminT
 	}
 	req.Header.Set("Authorization", "Bearer "+adminToken)
 
+	// #nosec G704 -- baseURL is admin-configured and validated by fetchCRSExport (allowlist when enabled)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err

@@ -14,9 +14,7 @@ func openaiResponsesURLFromBaseURL(normalizedBaseURL string, isGitHubCopilot boo
 		return base
 	}
 	if isGitHubCopilot {
-		if strings.HasSuffix(base, "/v1") {
-			base = strings.TrimSuffix(base, "/v1")
-		}
+		base = strings.TrimSuffix(base, "/v1")
 		return base + "/responses"
 	}
 	if strings.HasSuffix(base, "/v1") {

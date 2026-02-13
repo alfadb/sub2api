@@ -968,7 +968,6 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 					if doErr == nil {
 						_ = resp.Body.Close()
 						resp = retryResp
-						token = refreshed
 					} else if retryResp != nil && retryResp.Body != nil {
 						_ = retryResp.Body.Close()
 					}

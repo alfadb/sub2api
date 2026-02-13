@@ -272,7 +272,7 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 
 	// Set authentication header
 	if useBearer {
-		if !(account.Type == "apikey" && isGitHubCopilotAccount(account)) {
+		if account.Type != "apikey" || !isGitHubCopilotAccount(account) {
 			req.Header.Set("anthropic-beta", claude.DefaultBetaHeader)
 		}
 		req.Header.Set("Authorization", "Bearer "+authToken)

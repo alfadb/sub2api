@@ -18,6 +18,25 @@ import type {
   AdminDataImportResult
 } from '@/types'
 
+export interface GitHubDeviceAuthStartResult {
+  session_id: string
+  user_code: string
+  verification_uri: string
+  verification_uri_complete?: string
+  expires_in: number
+  interval: number
+}
+
+export interface GitHubDeviceAuthPollResult {
+  status: 'pending' | 'error' | 'success'
+  interval?: number
+  access_token?: string
+  token_type?: string
+  scope?: string
+  error?: string
+  error_description?: string
+}
+
 /**
  * List all accounts with pagination
  * @param page - Page number (default: 1)
@@ -115,6 +134,42 @@ export async function testAccount(id: number): Promise<{
     message: string
     latency_ms?: number
   }>(`/admin/accounts/${id}/test`)
+  return data
+}
+
+export async function startGitHubDeviceAuth(
+  id: number,
+  params?: {
+    client_id?: string
+    scope?: string
+  }
+): Promise<GitHubDeviceAuthStartResult> {
+  const { data } = await apiClient.post<GitHubDeviceAuthStartResult>(
+    `/admin/accounts/${id}/github/device/start`,
+    params || {}
+  )
+  return data
+}
+
+export async function pollGitHubDeviceAuth(
+  id: number,
+  sessionId: string
+): Promise<GitHubDeviceAuthPollResult | Account> {
+  const { data } = await apiClient.post<GitHubDeviceAuthPollResult | Account>(
+    `/admin/accounts/${id}/github/device/poll`,
+    { session_id: sessionId }
+  )
+  return data
+}
+
+export async function cancelGitHubDeviceAuth(
+  id: number,
+  sessionId: string
+): Promise<{ message: string }> {
+  const { data } = await apiClient.post<{ message: string }>(
+    `/admin/accounts/${id}/github/device/cancel`,
+    { session_id: sessionId }
+  )
   return data
 }
 
@@ -461,6 +516,9 @@ export const accountsAPI = {
   delete: deleteAccount,
   toggleStatus,
   testAccount,
+  startGitHubDeviceAuth,
+  pollGitHubDeviceAuth,
+  cancelGitHubDeviceAuth,
   refreshCredentials,
   getStats,
   clearError,

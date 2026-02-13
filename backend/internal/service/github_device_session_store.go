@@ -26,28 +26,41 @@ type GitHubDeviceSessionStore interface {
 }
 
 type inMemoryGitHubDeviceSessionStore struct {
-	mu       sync.RWMutex
-	sessions map[string]*GitHubDeviceSession
+	mu       sync.Mutex
+	sessions map[string]inMemoryGitHubDeviceSession
+}
+
+type inMemoryGitHubDeviceSession struct {
+	sess      *GitHubDeviceSession
+	expiresAt time.Time
 }
 
 func NewInMemoryGitHubDeviceSessionStore() GitHubDeviceSessionStore {
-	return &inMemoryGitHubDeviceSessionStore{sessions: make(map[string]*GitHubDeviceSession)}
+	return &inMemoryGitHubDeviceSessionStore{sessions: make(map[string]inMemoryGitHubDeviceSession)}
 }
 
 func (s *inMemoryGitHubDeviceSessionStore) Get(_ context.Context, id string) (*GitHubDeviceSession, bool, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	sess, ok := s.sessions[id]
-	if !ok || sess == nil {
-		return nil, false, nil
-	}
-	return sess, true, nil
-}
-
-func (s *inMemoryGitHubDeviceSessionStore) Set(_ context.Context, id string, sess *GitHubDeviceSession, _ time.Duration) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.sessions[id] = sess
+	entry, ok := s.sessions[id]
+	if !ok || entry.sess == nil {
+		return nil, false, nil
+	}
+	if !entry.expiresAt.IsZero() && time.Now().After(entry.expiresAt) {
+		delete(s.sessions, id)
+		return nil, false, nil
+	}
+	return entry.sess, true, nil
+}
+
+func (s *inMemoryGitHubDeviceSessionStore) Set(_ context.Context, id string, sess *GitHubDeviceSession, ttl time.Duration) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if ttl <= 0 || sess == nil {
+		delete(s.sessions, id)
+		return nil
+	}
+	s.sessions[id] = inMemoryGitHubDeviceSession{sess: sess, expiresAt: time.Now().Add(ttl)}
 	return nil
 }
 

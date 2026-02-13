@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -18,9 +17,8 @@ import (
 
 type githubDeviceAuthAdminService struct {
 	*stubAdminService
-	account       service.Account
-	updatedInput  *service.UpdateAccountInput
-	updatedAtUnix int64
+	account      service.Account
+	updatedInput *service.UpdateAccountInput
 }
 
 func (s *githubDeviceAuthAdminService) GetAccount(_ context.Context, id int64) (*service.Account, error) {
@@ -31,7 +29,6 @@ func (s *githubDeviceAuthAdminService) GetAccount(_ context.Context, id int64) (
 
 func (s *githubDeviceAuthAdminService) UpdateAccount(_ context.Context, id int64, input *service.UpdateAccountInput) (*service.Account, error) {
 	s.updatedInput = input
-	s.updatedAtUnix = time.Now().Unix()
 	acc := s.account
 	acc.ID = id
 	if input != nil {

@@ -86,6 +86,7 @@ func (s *claudeUsageService) FetchUsageWithOptions(ctx context.Context, opts *se
 			client = &http.Client{Timeout: 30 * time.Second}
 		}
 
+		// #nosec G704 -- usageURL is fixed (or test-injected) and not user-controlled
 		resp, err = client.Do(req)
 		if err != nil {
 			return nil, fmt.Errorf("request failed: %w", err)

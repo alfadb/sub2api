@@ -134,6 +134,7 @@ func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID i
 	}
 
 	// 执行请求
+	// #nosec G704 -- req URL/host validated by validateRequestHost
 	resp, err := entry.client.Do(req)
 	if err != nil {
 		// 请求失败，立即减少计数
@@ -206,6 +207,7 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 	}
 
 	// 执行请求
+	// #nosec G704 -- req URL/host validated by validateRequestHost
 	resp, err := entry.client.Do(req)
 	if err != nil {
 		// 请求失败，立即减少计数

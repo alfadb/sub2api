@@ -86,6 +86,7 @@ func (s *proxyProbeService) probeWithURL(ctx context.Context, client *http.Clien
 		return nil, 0, fmt.Errorf("failed to create request: %w", err)
 	}
 
+	// #nosec G704 -- probe URL comes from a fixed allowlist
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, 0, fmt.Errorf("proxy connection failed: %w", err)

@@ -37,6 +37,7 @@ func (c *pricingRemoteClient) FetchPricingJSON(ctx context.Context, url string) 
 		return nil, err
 	}
 
+	// #nosec G704 -- pricing URL is configured by operator/admin
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -56,6 +57,7 @@ func (c *pricingRemoteClient) FetchHashText(ctx context.Context, url string) (st
 		return "", err
 	}
 
+	// #nosec G704 -- pricing URL is configured by operator/admin
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return "", err

@@ -28,11 +28,8 @@ export interface GitHubDeviceAuthStartResult {
 }
 
 export interface GitHubDeviceAuthPollResult {
-  status: 'pending' | 'error' | 'success'
+  status: 'pending' | 'error'
   interval?: number
-  access_token?: string
-  token_type?: string
-  scope?: string
   error?: string
   error_description?: string
 }

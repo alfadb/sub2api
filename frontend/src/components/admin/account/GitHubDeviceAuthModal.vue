@@ -181,18 +181,13 @@ const poll = async (run: number) => {
     if (isAccountResult(result)) {
       appStore.showSuccess(t('admin.accounts.deviceAuth.success'))
       emit('success', result)
-      handleClose()
+      handleClose({ cancelRemote: false })
       return
     }
 
     const pollResult = result
 
-    if (pollResult.status === 'success') {
-      const updatedAccount = await adminAPI.accounts.getById(props.account.id)
-      appStore.showSuccess(t('admin.accounts.deviceAuth.success'))
-      emit('success', updatedAccount)
-      handleClose()
-    } else if (pollResult.status === 'error') {
+    if (pollResult.status === 'error') {
       error.value = pollResult.error_description || pollResult.error || t('admin.accounts.deviceAuth.failed')
       deviceCodeData.value = null
     } else {
@@ -235,11 +230,18 @@ const startAuth = async () => {
   }
 }
 
-const handleClose = async () => {
+type HandleCloseArg = { cancelRemote?: boolean } | Event
+
+const isHandleCloseOptions = (value: unknown): value is { cancelRemote?: boolean } => {
+  return typeof value === 'object' && value !== null && 'cancelRemote' in value
+}
+
+const handleClose = async (arg?: HandleCloseArg) => {
   stopPolling()
 
   const accountId = props.account?.id
   const sessionId = deviceCodeData.value?.session_id
+  const cancelRemote = !isHandleCloseOptions(arg) || arg.cancelRemote !== false
 
   // Invalidate any in-flight start/poll and reset local state.
   nextRun()
@@ -249,12 +251,8 @@ const handleClose = async () => {
   error.value = null
 
   // Try to cancel if we have a session
-  if (accountId && sessionId) {
-    try {
-      await adminAPI.accounts.cancelGitHubDeviceAuth(accountId, sessionId)
-    } catch (err: unknown) {
-      void err
-    }
+  if (cancelRemote && accountId && sessionId) {
+    await adminAPI.accounts.cancelGitHubDeviceAuth(accountId, sessionId).catch(() => {})
   }
   emit('close')
 }
@@ -263,17 +261,31 @@ watch(() => props.show, (newVal) => {
   if (newVal) {
     startAuth()
   } else {
+    const accountId = props.account?.id
+    const sessionId = deviceCodeData.value?.session_id
+
     stopPolling()
     nextRun()
     loading.value = false
     deviceCodeData.value = null
     error.value = null
     copied.value = false
+
+    if (accountId && sessionId) {
+      adminAPI.accounts.cancelGitHubDeviceAuth(accountId, sessionId).catch(() => {})
+    }
   }
 })
 
 onUnmounted(() => {
+  const accountId = props.account?.id
+  const sessionId = deviceCodeData.value?.session_id
+
   stopPolling()
   nextRun()
+
+  if (accountId && sessionId) {
+    adminAPI.accounts.cancelGitHubDeviceAuth(accountId, sessionId).catch(() => {})
+  }
 })
 </script>

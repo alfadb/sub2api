@@ -83,6 +83,7 @@ var ProviderSet = wire.NewSet(
 	NewRedeemCache,
 	NewUpdateCache,
 	NewGeminiTokenCache,
+	NewGitHubDeviceSessionStore,
 	NewSchedulerCache,
 	NewSchedulerOutboxRepository,
 	NewProxyLatencyCache,

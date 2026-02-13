@@ -80,7 +80,13 @@ func (p *GitHubCopilotTokenProvider) GetAccessToken(ctx context.Context, account
 		return p.exchangeAndCacheCopilotToken(ctx, account, githubToken, cacheKey)
 	}
 
-	time.Sleep(githubCopilotTokenLockWait)
+	timer := time.NewTimer(githubCopilotTokenLockWait)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case <-timer.C:
+	}
 	if token, err := p.tokenCache.GetAccessToken(ctx, cacheKey); err == nil && strings.TrimSpace(token) != "" {
 		slog.Debug("github_copilot_token_cache_hit_after_wait", "account_id", account.ID)
 		return token, nil

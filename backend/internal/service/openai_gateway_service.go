@@ -183,6 +183,7 @@ type OpenAIGatewayService struct {
 	httpUpstream        HTTPUpstream
 	deferredService     *DeferredService
 	openAITokenProvider *OpenAITokenProvider
+	githubCopilotToken  *GitHubCopilotTokenProvider
 	toolCorrector       *CodexToolCorrector
 }
 
@@ -202,6 +203,7 @@ func NewOpenAIGatewayService(
 	httpUpstream HTTPUpstream,
 	deferredService *DeferredService,
 	openAITokenProvider *OpenAITokenProvider,
+	githubCopilotToken *GitHubCopilotTokenProvider,
 ) *OpenAIGatewayService {
 	return &OpenAIGatewayService{
 		accountRepo:         accountRepo,
@@ -218,6 +220,7 @@ func NewOpenAIGatewayService(
 		httpUpstream:        httpUpstream,
 		deferredService:     deferredService,
 		openAITokenProvider: openAITokenProvider,
+		githubCopilotToken:  githubCopilotToken,
 		toolCorrector:       NewCodexToolCorrector(),
 	}
 }
@@ -716,6 +719,20 @@ func (s *OpenAIGatewayService) GetAccessToken(ctx context.Context, account *Acco
 		}
 		return accessToken, "oauth", nil
 	case AccountTypeAPIKey:
+		if isGitHubCopilotAccount(account) && s.githubCopilotToken != nil {
+			copilotToken, err := s.githubCopilotToken.GetAccessToken(ctx, account)
+			if err == nil && strings.TrimSpace(copilotToken) != "" {
+				return copilotToken, "github_copilot", nil
+			}
+			apiKey := strings.TrimSpace(account.GetOpenAIApiKey())
+			if apiKey == "" {
+				if err != nil {
+					return "", "", err
+				}
+				return "", "", errors.New("api_key not found in credentials")
+			}
+			return apiKey, "apikey", nil
+		}
 		apiKey := account.GetOpenAIApiKey()
 		if apiKey == "" {
 			return "", "", errors.New("api_key not found in credentials")
@@ -763,6 +780,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	originalModel := reqModel
 
 	isCodexCLI := openai.IsCodexCLIRequest(c.GetHeader("User-Agent"))
+	isGitHubCopilot := isGitHubCopilotAccount(account)
 
 	// 对所有请求执行模型映射（包含 Codex CLI）。
 	mappedModel := account.GetMappedModel(reqModel)
@@ -772,15 +790,29 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		bodyModified = true
 	}
 
-	// 针对所有 OpenAI 账号执行 Codex 模型名规范化，确保上游识别一致。
 	if model, ok := reqBody["model"].(string); ok {
-		normalizedModel := normalizeCodexModel(model)
-		if normalizedModel != "" && normalizedModel != model {
-			log.Printf("[OpenAI] Codex model normalization: %s -> %s (account: %s, type: %s, isCodexCLI: %v)",
-				model, normalizedModel, account.Name, account.Type, isCodexCLI)
-			reqBody["model"] = normalizedModel
-			mappedModel = normalizedModel
-			bodyModified = true
+		if isGitHubCopilot {
+			stripped := strings.TrimSpace(model)
+			if strings.Contains(stripped, "/") {
+				parts := strings.Split(stripped, "/")
+				stripped = strings.TrimSpace(parts[len(parts)-1])
+			}
+			if stripped != "" && stripped != model {
+				log.Printf("[OpenAI] GitHub Copilot model prefix stripped: %s -> %s (account: %s)",
+					model, stripped, account.Name)
+				reqBody["model"] = stripped
+				mappedModel = stripped
+				bodyModified = true
+			}
+		} else {
+			normalizedModel := normalizeCodexModel(model)
+			if normalizedModel != "" && normalizedModel != model {
+				log.Printf("[OpenAI] Codex model normalization: %s -> %s (account: %s, type: %s, isCodexCLI: %v)",
+					model, normalizedModel, account.Name, account.Type, isCodexCLI)
+				reqBody["model"] = normalizedModel
+				mappedModel = normalizedModel
+				bodyModified = true
+			}
 		}
 	}
 
@@ -813,7 +845,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			case PlatformOpenAI:
 				// For OpenAI API Key, remove max_output_tokens (not supported)
 				// For OpenAI OAuth (Responses API), keep it (supported)
-				if account.Type == AccountTypeAPIKey {
+				if account.Type == AccountTypeAPIKey && !isGitHubCopilot {
 					delete(reqBody, "max_output_tokens")
 					bodyModified = true
 				}
@@ -850,6 +882,14 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				bodyModified = true
 			}
 		}
+
+		if isGitHubCopilot {
+			// GitHub Copilot does not support service_tier; force JSON null (even if absent).
+			if v, ok := reqBody["service_tier"]; !ok || v != nil {
+				reqBody["service_tier"] = nil
+				bodyModified = true
+			}
+		}
 	}
 
 	// Re-serialize body only if modified
@@ -867,8 +907,15 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		return nil, err
 	}
 
+	copilotVision := false
+	copilotInitiator := "user"
+	if isGitHubCopilot {
+		copilotVision = githubCopilotVisionEnabledFromResponsesPayload(reqBody)
+		copilotInitiator = githubCopilotInitiatorFromResponsesPayload(reqBody)
+	}
+
 	// Build upstream request
-	upstreamReq, err := s.buildUpstreamRequest(ctx, c, account, body, token, reqStream, promptCacheKey, isCodexCLI)
+	upstreamReq, err := s.buildUpstreamRequest(ctx, c, account, body, token, reqStream, promptCacheKey, isCodexCLI, isGitHubCopilot, copilotVision, copilotInitiator)
 	if err != nil {
 		return nil, err
 	}
@@ -906,6 +953,30 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		})
 		return nil, fmt.Errorf("upstream request failed: %s", safeErr)
 	}
+
+	if isGitHubCopilot && resp.StatusCode == http.StatusUnauthorized && s.githubCopilotToken != nil {
+		githubToken := strings.TrimSpace(account.GetCredential("github_token"))
+		if githubToken == "" {
+			githubToken = strings.TrimSpace(account.GetCredential("gh_token"))
+		}
+		if githubToken != "" {
+			s.githubCopilotToken.Invalidate(ctx, account)
+			if refreshed, refreshErr := s.githubCopilotToken.GetAccessToken(ctx, account); refreshErr == nil && strings.TrimSpace(refreshed) != "" {
+				retryReq, buildErr := s.buildUpstreamRequest(ctx, c, account, body, refreshed, reqStream, promptCacheKey, isCodexCLI, isGitHubCopilot, copilotVision, copilotInitiator)
+				if buildErr == nil {
+					retryResp, doErr := s.httpUpstream.Do(retryReq, proxyURL, account.ID, account.Concurrency)
+					if doErr == nil {
+						_ = resp.Body.Close()
+						resp = retryResp
+						token = refreshed
+					} else if retryResp != nil && retryResp.Body != nil {
+						_ = retryResp.Body.Close()
+					}
+				}
+			}
+		}
+	}
+
 	defer func() { _ = resp.Body.Close() }()
 
 	// Handle error response
@@ -979,7 +1050,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}, nil
 }
 
-func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token string, isStream bool, promptCacheKey string, isCodexCLI bool) (*http.Request, error) {
+func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token string, isStream bool, promptCacheKey string, isCodexCLI bool, isGitHubCopilot bool, copilotVision bool, copilotInitiator string) (*http.Request, error) {
 	// Determine target URL based on account type
 	var targetURL string
 	switch account.Type {
@@ -996,7 +1067,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 			if err != nil {
 				return nil, err
 			}
-			targetURL = validatedURL + "/responses"
+			targetURL = openaiResponsesURLFromBaseURL(validatedURL, isGitHubCopilot)
 		}
 	default:
 		targetURL = openaiPlatformAPIURL
@@ -1048,6 +1119,14 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	customUA := account.GetOpenAIUserAgent()
 	if customUA != "" {
 		req.Header.Set("user-agent", customUA)
+	}
+
+	if isGitHubCopilot {
+		applyGitHubCopilotHeaders(req, copilotVision, copilotInitiator)
+	}
+
+	if isStream && strings.TrimSpace(req.Header.Get("accept")) == "" {
+		req.Header.Set("accept", "text/event-stream")
 	}
 
 	// Ensure required headers exist

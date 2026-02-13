@@ -1085,7 +1085,7 @@ func TestOpenAIInvalidBaseURLWhenAllowlistDisabled(t *testing.T) {
 		Credentials: map[string]any{"base_url": "://invalid-url"},
 	}
 
-	_, err := svc.buildUpstreamRequest(c.Request.Context(), c, account, []byte("{}"), "token", false, "", false)
+	_, err := svc.buildUpstreamRequest(c.Request.Context(), c, account, []byte("{}"), "token", false, "", false, false, false, "user")
 	if err == nil {
 		t.Fatalf("expected error for invalid base_url when allowlist disabled")
 	}

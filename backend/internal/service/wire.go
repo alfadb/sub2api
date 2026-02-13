@@ -241,6 +241,8 @@ var ProviderSet = wire.NewSet(
 	NewGeminiTokenProvider,
 	NewGeminiMessagesCompatService,
 	NewAntigravityTokenProvider,
+	NewGitHubCopilotTokenProvider,
+	NewGitHubDeviceAuthService,
 	NewOpenAITokenProvider,
 	NewClaudeTokenProvider,
 	NewAntigravityGatewayService,

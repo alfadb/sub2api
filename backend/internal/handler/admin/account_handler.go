@@ -43,6 +43,8 @@ type AccountHandler struct {
 	rateLimitService        *service.RateLimitService
 	accountUsageService     *service.AccountUsageService
 	accountTestService      *service.AccountTestService
+	githubDeviceAuthService *service.GitHubDeviceAuthService
+	githubCopilotToken      *service.GitHubCopilotTokenProvider
 	concurrencyService      *service.ConcurrencyService
 	crsSyncService          *service.CRSSyncService
 	sessionLimitCache       service.SessionLimitCache
@@ -61,6 +63,8 @@ func NewAccountHandler(
 	accountTestService *service.AccountTestService,
 	concurrencyService *service.ConcurrencyService,
 	crsSyncService *service.CRSSyncService,
+	githubDeviceAuthService *service.GitHubDeviceAuthService,
+	githubCopilotTokenProvider *service.GitHubCopilotTokenProvider,
 	sessionLimitCache service.SessionLimitCache,
 	tokenCacheInvalidator service.TokenCacheInvalidator,
 ) *AccountHandler {
@@ -73,6 +77,8 @@ func NewAccountHandler(
 		rateLimitService:        rateLimitService,
 		accountUsageService:     accountUsageService,
 		accountTestService:      accountTestService,
+		githubDeviceAuthService: githubDeviceAuthService,
+		githubCopilotToken:      githubCopilotTokenProvider,
 		concurrencyService:      concurrencyService,
 		crsSyncService:          crsSyncService,
 		sessionLimitCache:       sessionLimitCache,
@@ -455,6 +461,148 @@ func (h *AccountHandler) Test(c *gin.Context) {
 		// Error already sent via SSE, just log
 		return
 	}
+}
+
+type GitHubDeviceAuthStartRequest struct {
+	ClientID string `json:"client_id"`
+	Scope    string `json:"scope"`
+}
+
+func (h *AccountHandler) StartGitHubDeviceAuth(c *gin.Context) {
+	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid account ID")
+		return
+	}
+	if h.githubDeviceAuthService == nil {
+		response.InternalError(c, "GitHub device auth service not configured")
+		return
+	}
+
+	var req GitHubDeviceAuthStartRequest
+	_ = c.ShouldBindJSON(&req)
+
+	account, err := h.adminService.GetAccount(c.Request.Context(), accountID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if account == nil {
+		response.BadRequest(c, "Account not found")
+		return
+	}
+	if account.Type != service.AccountTypeAPIKey {
+		response.BadRequest(c, "Device auth only supports APIKey accounts")
+		return
+	}
+	baseURL := strings.TrimSpace(account.GetCredential("base_url"))
+	if !service.IsGitHubCopilotBaseURL(baseURL) {
+		response.BadRequest(c, "Account base_url is not a GitHub Copilot endpoint")
+		return
+	}
+
+	result, err := h.githubDeviceAuthService.Start(c.Request.Context(), account, req.ClientID, req.Scope)
+	if err != nil {
+		response.InternalError(c, "Start device auth failed: "+err.Error())
+		return
+	}
+	response.Success(c, result)
+}
+
+type GitHubDeviceAuthPollRequest struct {
+	SessionID string `json:"session_id" binding:"required"`
+}
+
+func (h *AccountHandler) PollGitHubDeviceAuth(c *gin.Context) {
+	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid account ID")
+		return
+	}
+	if h.githubDeviceAuthService == nil {
+		response.InternalError(c, "GitHub device auth service not configured")
+		return
+	}
+
+	var req GitHubDeviceAuthPollRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+
+	pollResult, err := h.githubDeviceAuthService.Poll(c.Request.Context(), accountID, req.SessionID)
+	if err != nil {
+		response.InternalError(c, "Poll device auth failed: "+err.Error())
+		return
+	}
+	if pollResult == nil {
+		response.InternalError(c, "Poll device auth failed: empty result")
+		return
+	}
+	if pollResult.Status != "success" {
+		response.Success(c, pollResult)
+		return
+	}
+	if strings.TrimSpace(pollResult.AccessToken) == "" {
+		response.InternalError(c, "Poll device auth failed: empty access_token")
+		return
+	}
+
+	account, err := h.adminService.GetAccount(c.Request.Context(), accountID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if account == nil {
+		response.BadRequest(c, "Account not found")
+		return
+	}
+
+	newCredentials := make(map[string]any)
+	for k, v := range account.Credentials {
+		newCredentials[k] = v
+	}
+	newCredentials["github_token"] = strings.TrimSpace(pollResult.AccessToken)
+
+	updated, err := h.adminService.UpdateAccount(c.Request.Context(), accountID, &service.UpdateAccountInput{
+		Credentials: newCredentials,
+	})
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if h.githubCopilotToken != nil {
+		h.githubCopilotToken.Invalidate(c.Request.Context(), updated)
+	}
+	response.Success(c, dto.AccountFromService(updated))
+}
+
+type GitHubDeviceAuthCancelRequest struct {
+	SessionID string `json:"session_id" binding:"required"`
+}
+
+func (h *AccountHandler) CancelGitHubDeviceAuth(c *gin.Context) {
+	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid account ID")
+		return
+	}
+	if h.githubDeviceAuthService == nil {
+		response.InternalError(c, "GitHub device auth service not configured")
+		return
+	}
+
+	var req GitHubDeviceAuthCancelRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+
+	if ok := h.githubDeviceAuthService.Cancel(accountID, req.SessionID); !ok {
+		response.BadRequest(c, "Session not found")
+		return
+	}
+	response.Success(c, gin.H{"message": "Device auth session cancelled"})
 }
 
 // SyncFromCRS handles syncing accounts from claude-relay-service (CRS)

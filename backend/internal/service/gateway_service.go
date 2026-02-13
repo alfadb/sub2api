@@ -413,6 +413,7 @@ type GatewayService struct {
 	deferredService     *DeferredService
 	concurrencyService  *ConcurrencyService
 	claudeTokenProvider *ClaudeTokenProvider
+	githubCopilotToken  *GitHubCopilotTokenProvider
 	sessionLimitCache   SessionLimitCache // 会话数量限制缓存（仅 Anthropic OAuth/SetupToken）
 }
 
@@ -435,6 +436,7 @@ func NewGatewayService(
 	httpUpstream HTTPUpstream,
 	deferredService *DeferredService,
 	claudeTokenProvider *ClaudeTokenProvider,
+	githubCopilotTokenProvider *GitHubCopilotTokenProvider,
 	sessionLimitCache SessionLimitCache,
 	digestStore *DigestSessionStore,
 ) *GatewayService {
@@ -457,6 +459,7 @@ func NewGatewayService(
 		httpUpstream:        httpUpstream,
 		deferredService:     deferredService,
 		claudeTokenProvider: claudeTokenProvider,
+		githubCopilotToken:  githubCopilotTokenProvider,
 		sessionLimitCache:   sessionLimitCache,
 	}
 }
@@ -2562,6 +2565,20 @@ func (s *GatewayService) GetAccessToken(ctx context.Context, account *Account) (
 		// Both oauth and setup-token use OAuth token flow
 		return s.getOAuthToken(ctx, account)
 	case AccountTypeAPIKey:
+		if isGitHubCopilotAccount(account) && s.githubCopilotToken != nil {
+			copilotToken, err := s.githubCopilotToken.GetAccessToken(ctx, account)
+			if err == nil && strings.TrimSpace(copilotToken) != "" {
+				return copilotToken, "github_copilot", nil
+			}
+			apiKey := strings.TrimSpace(account.GetCredential("api_key"))
+			if apiKey != "" {
+				return apiKey, "apikey", nil
+			}
+			if err != nil {
+				return "", "", err
+			}
+			return "", "", errors.New("api_key not found in credentials")
+		}
 		apiKey := account.GetCredential("api_key")
 		if apiKey == "" {
 			return "", "", errors.New("api_key not found in credentials")
@@ -3017,6 +3034,15 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	isClaudeCode := isClaudeCodeRequest(ctx, c, parsed)
 	shouldMimicClaudeCode := account.IsOAuth() && !isClaudeCode
 
+	isGitHubCopilot := isGitHubCopilotAccount(account)
+	copilotVision := false
+	copilotInitiator := "user"
+	if isGitHubCopilot {
+		copilotVision = githubCopilotVisionEnabledFromClaudeMessagesPayload(parsed.Messages)
+		copilotInitiator = githubCopilotInitiatorFromClaudeMessagesPayload(parsed.Messages)
+	}
+	thinkingEnabled := parsed.ThinkingEnabled
+
 	if shouldMimicClaudeCode {
 		// 智能注入 Claude Code 系统提示词（仅 OAuth/SetupToken 账号需要）
 		// 条件：1) OAuth/SetupToken 账号  2) 不是 Claude Code 客户端  3) 不是 Haiku 模型  4) system 中还没有 Claude Code 提示词
@@ -3096,7 +3122,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		// 构建上游请求（每次重试需要重新构建，因为请求体需要重新读取）
 		// Capture upstream request body for ops retry of this attempt.
 		c.Set(OpsUpstreamRequestBodyKey, string(body))
-		upstreamReq, err := s.buildUpstreamRequest(ctx, c, account, body, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode)
+		upstreamReq, err := s.buildUpstreamRequest(ctx, c, account, body, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode, isGitHubCopilot, copilotVision, copilotInitiator, thinkingEnabled)
 		if err != nil {
 			return nil, err
 		}
@@ -3126,6 +3152,28 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 				},
 			})
 			return nil, fmt.Errorf("upstream request failed: %s", safeErr)
+		}
+
+		if isGitHubCopilot && resp.StatusCode == http.StatusUnauthorized && s.githubCopilotToken != nil && tokenType == "github_copilot" {
+			refreshed := ""
+			s.githubCopilotToken.Invalidate(ctx, account)
+			if t, refreshErr := s.githubCopilotToken.GetAccessToken(ctx, account); refreshErr == nil {
+				refreshed = strings.TrimSpace(t)
+			}
+			if refreshed != "" {
+				retryReq, buildErr := s.buildUpstreamRequest(ctx, c, account, body, refreshed, tokenType, reqModel, reqStream, shouldMimicClaudeCode, isGitHubCopilot, copilotVision, copilotInitiator, thinkingEnabled)
+				if buildErr == nil {
+					retryResp, doErr := s.httpUpstream.DoWithTLS(retryReq, proxyURL, account.ID, account.Concurrency, account.IsTLSFingerprintEnabled())
+					if doErr == nil {
+						_ = resp.Body.Close()
+						resp = retryResp
+						token = refreshed
+					}
+					if doErr != nil && retryResp != nil && retryResp.Body != nil {
+						_ = retryResp.Body.Close()
+					}
+				}
+			}
 		}
 
 		// 优先检测thinking block签名错误（400）并重试一次
@@ -3174,7 +3222,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 					//    also downgrade tool_use/tool_result blocks to text.
 
 					filteredBody := FilterThinkingBlocksForRetry(body)
-					retryReq, buildErr := s.buildUpstreamRequest(ctx, c, account, filteredBody, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode)
+					retryReq, buildErr := s.buildUpstreamRequest(ctx, c, account, filteredBody, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode, isGitHubCopilot, copilotVision, copilotInitiator, thinkingEnabled)
 					if buildErr == nil {
 						retryResp, retryErr := s.httpUpstream.DoWithTLS(retryReq, proxyURL, account.ID, account.Concurrency, account.IsTLSFingerprintEnabled())
 						if retryErr == nil {
@@ -3206,7 +3254,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 								if looksLikeToolSignatureError(msg2) && time.Since(retryStart) < maxRetryElapsed {
 									log.Printf("Account %d: signature retry still failing and looks tool-related, retrying with tool blocks downgraded", account.ID)
 									filteredBody2 := FilterSignatureSensitiveBlocksForRetry(body)
-									retryReq2, buildErr2 := s.buildUpstreamRequest(ctx, c, account, filteredBody2, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode)
+									retryReq2, buildErr2 := s.buildUpstreamRequest(ctx, c, account, filteredBody2, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode, isGitHubCopilot, copilotVision, copilotInitiator, thinkingEnabled)
 									if buildErr2 == nil {
 										retryResp2, retryErr2 := s.httpUpstream.DoWithTLS(retryReq2, proxyURL, account.ID, account.Concurrency, account.IsTLSFingerprintEnabled())
 										if retryErr2 == nil {
@@ -3459,7 +3507,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	}, nil
 }
 
-func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token, tokenType, modelID string, reqStream bool, mimicClaudeCode bool) (*http.Request, error) {
+func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token, tokenType, modelID string, reqStream bool, mimicClaudeCode bool, isGitHubCopilot bool, copilotVision bool, copilotInitiator string, thinkingEnabled bool) (*http.Request, error) {
 	// 确定目标URL
 	targetURL := claudeAPIURL
 	if account.Type == AccountTypeAPIKey {
@@ -3469,7 +3517,7 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 			if err != nil {
 				return nil, err
 			}
-			targetURL = validatedURL + "/v1/messages"
+			targetURL = anthropicMessagesURLFromBaseURL(validatedURL)
 		}
 	}
 
@@ -3506,7 +3554,7 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 	}
 
 	// 设置认证头
-	if tokenType == "oauth" {
+	if tokenType == "oauth" || tokenType == "github_copilot" {
 		req.Header.Set("authorization", "Bearer "+token)
 	} else {
 		req.Header.Set("x-api-key", token)
@@ -3527,6 +3575,10 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 		s.identityService.ApplyFingerprint(req, fingerprint)
 	}
 
+	if isGitHubCopilot {
+		applyGitHubCopilotHeaders(req, copilotVision, copilotInitiator)
+	}
+
 	// 确保必要的headers存在
 	if req.Header.Get("content-type") == "" {
 		req.Header.Set("content-type", "application/json")
@@ -3536,6 +3588,9 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 	}
 	if tokenType == "oauth" {
 		applyClaudeOAuthHeaderDefaults(req, reqStream)
+	}
+	if reqStream && strings.TrimSpace(req.Header.Get("accept")) == "" {
+		req.Header.Set("accept", "text/event-stream")
 	}
 
 	// 处理 anthropic-beta header（OAuth 账号需要包含 oauth beta）
@@ -3565,6 +3620,21 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 				req.Header.Set("anthropic-beta", beta)
 			}
 		}
+	}
+
+	if isGitHubCopilot {
+		incomingBeta := req.Header.Get("anthropic-beta")
+		if strings.TrimSpace(incomingBeta) == "" {
+			if requestNeedsBetaFeatures(body) {
+				incomingBeta = defaultAPIKeyBetaHeader(body)
+			}
+		}
+		required := []string{}
+		if thinkingEnabled {
+			required = append(required, claude.BetaInterleavedThinking)
+		}
+		drop := map[string]struct{}{claude.BetaClaudeCode: {}}
+		req.Header.Set("anthropic-beta", mergeAnthropicBetaDropping(required, incomingBeta, drop))
 	}
 
 	// Always capture a compact fingerprint line for later error diagnostics.
@@ -5032,7 +5102,7 @@ func (s *GatewayService) buildCountTokensRequest(ctx context.Context, c *gin.Con
 			if err != nil {
 				return nil, err
 			}
-			targetURL = validatedURL + "/v1/messages/count_tokens"
+			targetURL = anthropicCountTokensURLFromBaseURL(validatedURL)
 		}
 	}
 
@@ -5061,7 +5131,7 @@ func (s *GatewayService) buildCountTokensRequest(ctx context.Context, c *gin.Con
 	}
 
 	// 设置认证头
-	if tokenType == "oauth" {
+	if tokenType == "oauth" || tokenType == "github_copilot" {
 		req.Header.Set("authorization", "Bearer "+token)
 	} else {
 		req.Header.Set("x-api-key", token)
@@ -5083,6 +5153,10 @@ func (s *GatewayService) buildCountTokensRequest(ctx context.Context, c *gin.Con
 		if fp != nil {
 			s.identityService.ApplyFingerprint(req, fp)
 		}
+	}
+
+	if isGitHubCopilotAccount(account) {
+		applyGitHubCopilotHeaders(req, false, "user")
 	}
 
 	// 确保必要的 headers 存在
@@ -5123,6 +5197,12 @@ func (s *GatewayService) buildCountTokensRequest(ctx context.Context, c *gin.Con
 				req.Header.Set("anthropic-beta", beta)
 			}
 		}
+	}
+
+	if isGitHubCopilotAccount(account) {
+		incomingBeta := req.Header.Get("anthropic-beta")
+		drop := map[string]struct{}{claude.BetaClaudeCode: {}}
+		req.Header.Set("anthropic-beta", mergeAnthropicBetaDropping(nil, incomingBeta, drop))
 	}
 
 	if c != nil && tokenType == "oauth" {

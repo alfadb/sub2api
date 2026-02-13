@@ -44,27 +44,30 @@ type TestEvent struct {
 
 // AccountTestService handles account testing operations
 type AccountTestService struct {
-	accountRepo               AccountRepository
-	geminiTokenProvider       *GeminiTokenProvider
-	antigravityGatewayService *AntigravityGatewayService
-	httpUpstream              HTTPUpstream
-	cfg                       *config.Config
+	accountRepo                AccountRepository
+	geminiTokenProvider        *GeminiTokenProvider
+	githubCopilotTokenProvider *GitHubCopilotTokenProvider
+	antigravityGatewayService  *AntigravityGatewayService
+	httpUpstream               HTTPUpstream
+	cfg                        *config.Config
 }
 
 // NewAccountTestService creates a new AccountTestService
 func NewAccountTestService(
 	accountRepo AccountRepository,
 	geminiTokenProvider *GeminiTokenProvider,
+	githubCopilotTokenProvider *GitHubCopilotTokenProvider,
 	antigravityGatewayService *AntigravityGatewayService,
 	httpUpstream HTTPUpstream,
 	cfg *config.Config,
 ) *AccountTestService {
 	return &AccountTestService{
-		accountRepo:               accountRepo,
-		geminiTokenProvider:       geminiTokenProvider,
-		antigravityGatewayService: antigravityGatewayService,
-		httpUpstream:              httpUpstream,
-		cfg:                       cfg,
+		accountRepo:                accountRepo,
+		geminiTokenProvider:        geminiTokenProvider,
+		githubCopilotTokenProvider: githubCopilotTokenProvider,
+		antigravityGatewayService:  antigravityGatewayService,
+		httpUpstream:               httpUpstream,
+		cfg:                        cfg,
 	}
 }
 
@@ -200,11 +203,23 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 			return s.sendErrorAndEnd(c, "No access token available")
 		}
 	} else if account.Type == "apikey" {
-		// API Key - use x-api-key header
-		useBearer = false
-		authToken = account.GetCredential("api_key")
+		isGitHubCopilot := isGitHubCopilotAccount(account)
+		if isGitHubCopilot && s.githubCopilotTokenProvider != nil {
+			if token, err := s.githubCopilotTokenProvider.GetAccessToken(ctx, account); err == nil && strings.TrimSpace(token) != "" {
+				useBearer = true
+				authToken = token
+			}
+		}
 		if authToken == "" {
-			return s.sendErrorAndEnd(c, "No API key available")
+			// API Key - use x-api-key header
+			useBearer = false
+			authToken = account.GetCredential("api_key")
+			if authToken == "" {
+				if isGitHubCopilot {
+					return s.sendErrorAndEnd(c, "No GitHub token or Copilot bearer token available")
+				}
+				return s.sendErrorAndEnd(c, "No API key available")
+			}
 		}
 
 		baseURL := account.GetBaseURL()
@@ -246,19 +261,26 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("anthropic-version", "2023-06-01")
 
-	// Apply Claude Code client headers
-	for key, value := range claude.DefaultHeaders {
-		req.Header.Set(key, value)
+	if account.Type == "apikey" && isGitHubCopilotAccount(account) {
+		applyGitHubCopilotHeaders(req, false, "user")
+	} else {
+		// Apply Claude Code client headers
+		for key, value := range claude.DefaultHeaders {
+			req.Header.Set(key, value)
+		}
 	}
 
 	// Set authentication header
 	if useBearer {
-		req.Header.Set("anthropic-beta", claude.DefaultBetaHeader)
+		if !(account.Type == "apikey" && isGitHubCopilotAccount(account)) {
+			req.Header.Set("anthropic-beta", claude.DefaultBetaHeader)
+		}
 		req.Header.Set("Authorization", "Bearer "+authToken)
 	} else {
 		req.Header.Set("anthropic-beta", claude.APIKeyBetaHeader)
 		req.Header.Set("x-api-key", authToken)
 	}
+	req.Header.Set("accept", "text/event-stream")
 
 	// Get proxy URL
 	proxyURL := ""
@@ -320,9 +342,20 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		chatgptAccountID = account.GetChatGPTAccountID()
 	} else if account.Type == "apikey" {
 		// API Key - use Platform API
-		authToken = account.GetOpenAIApiKey()
+		isGitHubCopilot := isGitHubCopilotAccount(account)
+		if isGitHubCopilot && s.githubCopilotTokenProvider != nil {
+			if token, err := s.githubCopilotTokenProvider.GetAccessToken(ctx, account); err == nil && strings.TrimSpace(token) != "" {
+				authToken = token
+			}
+		}
 		if authToken == "" {
-			return s.sendErrorAndEnd(c, "No API key available")
+			authToken = account.GetOpenAIApiKey()
+			if authToken == "" {
+				if isGitHubCopilot {
+					return s.sendErrorAndEnd(c, "No GitHub token or Copilot bearer token available")
+				}
+				return s.sendErrorAndEnd(c, "No API key available")
+			}
 		}
 
 		baseURL := account.GetOpenAIBaseURL()
@@ -333,7 +366,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		if err != nil {
 			return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid base URL: %s", err.Error()))
 		}
-		apiURL = strings.TrimSuffix(normalizedBaseURL, "/") + "/responses"
+		apiURL = openaiResponsesURLFromBaseURL(normalizedBaseURL, isGitHubCopilot)
 	} else {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Unsupported account type: %s", account.Type))
 	}
@@ -360,14 +393,17 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	// Set common headers
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+authToken)
+	req.Header.Set("accept", "text/event-stream")
 
 	// Set OAuth-specific headers for ChatGPT internal API
 	if isOAuth {
 		req.Host = "chatgpt.com"
-		req.Header.Set("accept", "text/event-stream")
 		if chatgptAccountID != "" {
 			req.Header.Set("chatgpt-account-id", chatgptAccountID)
 		}
+	}
+	if account.Type == "apikey" && isGitHubCopilotAccount(account) {
+		applyGitHubCopilotHeaders(req, false, "user")
 	}
 
 	// Get proxy URL

@@ -218,6 +218,7 @@ func (c *Client) ExchangeCode(ctx context.Context, code, codeVerifier string) (*
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
+	// #nosec G704 -- request targets fixed Google OAuth token endpoint
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("token 交换请求失败: %w", err)
@@ -255,6 +256,7 @@ func (c *Client) RefreshToken(ctx context.Context, refreshToken string) (*TokenR
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
+	// #nosec G704 -- request targets fixed Google OAuth token endpoint
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("token 刷新请求失败: %w", err)
@@ -286,6 +288,7 @@ func (c *Client) GetUserInfo(ctx context.Context, accessToken string) (*UserInfo
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
+	// #nosec G704 -- request targets fixed Google OAuth userinfo endpoint
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("用户信息请求失败: %w", err)
@@ -335,6 +338,7 @@ func (c *Client) LoadCodeAssist(ctx context.Context, accessToken string) (*LoadC
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("User-Agent", UserAgent)
 
+		// #nosec G704 -- request targets fixed Antigravity API host allowlist (BaseURLs)
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			lastErr = fmt.Errorf("loadCodeAssist 请求失败: %w", err)
@@ -414,6 +418,7 @@ func (c *Client) OnboardUser(ctx context.Context, accessToken, tierID string) (s
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("User-Agent", UserAgent)
 
+			// #nosec G704 -- request targets fixed Antigravity API host allowlist (BaseURLs)
 			resp, err := c.httpClient.Do(req)
 			if err != nil {
 				lastErr = fmt.Errorf("onboardUser 请求失败: %w", err)
@@ -534,6 +539,7 @@ func (c *Client) FetchAvailableModels(ctx context.Context, accessToken, projectI
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("User-Agent", UserAgent)
 
+		// #nosec G704 -- request targets fixed Antigravity API host allowlist (BaseURLs)
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			lastErr = fmt.Errorf("fetchAvailableModels 请求失败: %w", err)

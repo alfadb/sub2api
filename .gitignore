@@ -85,6 +85,7 @@ temp/
 .cache/
 .dev/
 .serena/
+.sisyphus/
 
 # ===================
 # 构建产物

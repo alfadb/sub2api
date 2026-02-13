@@ -88,6 +88,8 @@ security:
     upstream_hosts:
       - "api.openai.com"
       - "api.anthropic.com"
+      - "*.githubcopilot.com"
+      - "api.github.com"
       - "api.kimi.com"
       - "open.bigmodel.cn"
       - "api.minimaxi.com"

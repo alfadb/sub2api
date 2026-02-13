@@ -267,7 +267,7 @@ func (s *GitHubDeviceAuthService) Poll(ctx context.Context, accountID int64, ses
 	return &GitHubDeviceAuthPollResult{Status: "error", Error: errCode, ErrorDesc: strings.TrimSpace(parsed.ErrorDescription)}, nil
 }
 
-func (s *GitHubDeviceAuthService) Cancel(accountID int64, sessionID string) bool {
+func (s *GitHubDeviceAuthService) Cancel(ctx context.Context, accountID int64, sessionID string) bool {
 	if s == nil {
 		return false
 	}
@@ -275,20 +275,25 @@ func (s *GitHubDeviceAuthService) Cancel(accountID int64, sessionID string) bool
 	if sessionID == "" {
 		return false
 	}
-	sess, ok, _ := s.store.Get(context.Background(), sessionID)
+	sess, ok, err := s.store.Get(ctx, sessionID)
+	if err != nil {
+		return false
+	}
 	if !ok || sess == nil {
 		return false
 	}
 	now := time.Now()
 	expiresAt := time.Unix(sess.ExpiresAtUnix, 0)
 	if now.After(expiresAt) {
-		_ = s.store.Delete(context.Background(), sessionID)
+		_ = s.store.Delete(ctx, sessionID)
 		return false
 	}
 	if sess.AccountID != accountID {
 		return false
 	}
-	_ = s.store.Delete(context.Background(), sessionID)
+	if err := s.store.Delete(ctx, sessionID); err != nil {
+		return false
+	}
 	return true
 }
 

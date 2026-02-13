@@ -598,7 +598,7 @@ func (h *AccountHandler) CancelGitHubDeviceAuth(c *gin.Context) {
 		return
 	}
 
-	if ok := h.githubDeviceAuthService.Cancel(accountID, req.SessionID); !ok {
+	if ok := h.githubDeviceAuthService.Cancel(c.Request.Context(), accountID, req.SessionID); !ok {
 		response.BadRequest(c, "Session not found")
 		return
 	}

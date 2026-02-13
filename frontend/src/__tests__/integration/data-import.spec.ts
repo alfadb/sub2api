@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import ImportDataModal from '@/components/admin/account/ImportDataModal.vue'
 
 const showError = vi.fn()
@@ -64,6 +64,9 @@ describe('ImportDataModal', () => {
 
     await input.trigger('change')
     await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await flushPromises()
 
     expect(showError).toHaveBeenCalledWith('admin.accounts.dataImportParseFailed')
   })

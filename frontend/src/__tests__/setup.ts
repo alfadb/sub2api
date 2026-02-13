@@ -5,6 +5,26 @@
 import { config } from '@vue/test-utils'
 import { vi } from 'vitest'
 
+// jsdom File/Blob polyfills
+// Some jsdom versions do not implement File.prototype.text() even though browsers do.
+if (typeof globalThis.File !== 'undefined' && typeof globalThis.File.prototype.text !== 'function') {
+  globalThis.File.prototype.text = async function text(): Promise<string> {
+    const blob = this as unknown as Blob
+
+    if (typeof blob.arrayBuffer === 'function') {
+      const buf = await blob.arrayBuffer()
+      return new TextDecoder().decode(buf)
+    }
+
+    return await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(String(reader.result ?? ''))
+      reader.onerror = () => reject(reader.error)
+      reader.readAsText(blob)
+    })
+  }
+}
+
 // Mock requestIdleCallback (Safari < 15 不支持)
 if (typeof globalThis.requestIdleCallback === 'undefined') {
   globalThis.requestIdleCallback = ((callback: IdleRequestCallback) => {

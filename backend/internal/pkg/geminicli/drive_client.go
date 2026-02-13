@@ -43,8 +43,9 @@ func (c *driveClient) GetStorageQuota(ctx context.Context, accessToken, proxyURL
 
 	// Get HTTP client with proxy support
 	client, err := httpclient.GetClient(httpclient.Options{
-		ProxyURL: proxyURL,
-		Timeout:  10 * time.Second,
+		ProxyURL:           proxyURL,
+		Timeout:            10 * time.Second,
+		ValidateResolvedIP: true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create HTTP client: %w", err)
@@ -70,6 +71,7 @@ func (c *driveClient) GetStorageQuota(ctx context.Context, accessToken, proxyURL
 			return nil, fmt.Errorf("request cancelled: %w", ctx.Err())
 		}
 
+		// #nosec G704 -- request targets fixed Google Drive API host (driveAPIURL)
 		resp, err = client.Do(req)
 		if err != nil {
 			// Network error retry

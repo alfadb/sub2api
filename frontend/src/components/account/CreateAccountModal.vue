@@ -70,12 +70,15 @@
       <!-- Platform Selection - Segmented Control Style -->
       <div>
         <label class="input-label">{{ t('admin.accounts.platform') }}</label>
-        <div class="mt-2 flex rounded-lg bg-gray-100 p-1 dark:bg-dark-700" data-tour="account-form-platform">
+        <div
+          class="mt-2 grid grid-cols-2 gap-1 rounded-lg bg-gray-100 p-1 dark:bg-dark-700 sm:grid-cols-3"
+          data-tour="account-form-platform"
+        >
           <button
             type="button"
             @click="form.platform = 'anthropic'"
             :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
+              'flex w-full items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
               form.platform === 'anthropic'
                 ? 'bg-white text-orange-600 shadow-sm dark:bg-dark-600 dark:text-orange-400'
                 : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
@@ -88,7 +91,7 @@
             type="button"
             @click="form.platform = 'openai'"
             :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
+              'flex w-full items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
               form.platform === 'openai'
                 ? 'bg-white text-green-600 shadow-sm dark:bg-dark-600 dark:text-green-400'
                 : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
@@ -111,9 +114,35 @@
           </button>
           <button
             type="button"
+            @click="form.platform = 'copilot'"
+            :class="[
+              'flex w-full items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
+              form.platform === 'copilot'
+                ? 'bg-white text-gray-900 shadow-sm dark:bg-dark-600 dark:text-white'
+                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
+            ]"
+          >
+            <Icon name="cpu" size="sm" />
+            Copilot
+          </button>
+          <button
+            type="button"
+            @click="form.platform = 'aggregator'"
+            :class="[
+              'flex w-full items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
+              form.platform === 'aggregator'
+                ? 'bg-white text-indigo-600 shadow-sm dark:bg-dark-600 dark:text-indigo-400'
+                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
+            ]"
+          >
+            <Icon name="swap" size="sm" />
+            Aggregator
+          </button>
+          <button
+            type="button"
             @click="form.platform = 'gemini'"
             :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
+              'flex w-full items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
               form.platform === 'gemini'
                 ? 'bg-white text-blue-600 shadow-sm dark:bg-dark-600 dark:text-blue-400'
                 : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
@@ -138,7 +167,7 @@
             type="button"
             @click="form.platform = 'antigravity'"
             :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
+              'flex w-full items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
               form.platform === 'antigravity'
                 ? 'bg-white text-purple-600 shadow-sm dark:bg-dark-600 dark:text-purple-400'
                 : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
@@ -823,13 +852,18 @@
           <input
             v-model="apiKeyBaseUrl"
             type="text"
+            :required="form.platform === 'aggregator'"
             class="input"
             :placeholder="
               form.platform === 'openai'
                 ? 'https://api.openai.com'
-                : form.platform === 'gemini'
-                  ? 'https://generativelanguage.googleapis.com'
-                  : 'https://api.anthropic.com'
+                : form.platform === 'copilot'
+                  ? 'https://api.githubcopilot.com'
+                  : form.platform === 'aggregator'
+                    ? 'https://example.com'
+                    : form.platform === 'gemini'
+                      ? 'https://generativelanguage.googleapis.com'
+                      : 'https://api.anthropic.com'
             "
           />
           <p class="input-hint">{{ baseUrlHint }}</p>
@@ -844,9 +878,11 @@
             :placeholder="
               form.platform === 'openai'
                 ? 'sk-proj-...'
-                : form.platform === 'gemini'
-                  ? 'AIza...'
-                  : 'sk-ant-...'
+                : form.platform === 'copilot'
+                  ? 'github_pat_...'
+                  : form.platform === 'gemini'
+                    ? 'AIza...'
+                    : 'sk-ant-...'
             "
           />
           <p class="input-hint">{{ apiKeyHint }}</p>
@@ -863,7 +899,10 @@
         </div>
 
         <!-- Model Restriction Section (不适用于 Gemini，Antigravity 已在上层条件排除) -->
-        <div v-if="form.platform !== 'gemini'" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+        <div
+          v-if="form.platform !== 'gemini' && form.platform !== 'copilot'"
+          class="border-t border-gray-200 pt-4 dark:border-dark-600"
+        >
           <label class="input-label">{{ t('admin.accounts.modelRestriction') }}</label>
 
           <!-- Mode Toggle -->
@@ -2027,12 +2066,16 @@ const oauthStepTitle = computed(() => {
 // Platform-specific hints for API Key type
 const baseUrlHint = computed(() => {
   if (form.platform === 'openai') return t('admin.accounts.openai.baseUrlHint')
+  if (form.platform === 'copilot') return ''
+  if (form.platform === 'aggregator') return ''
   if (form.platform === 'gemini') return t('admin.accounts.gemini.baseUrlHint')
   return t('admin.accounts.baseUrlHint')
 })
 
 const apiKeyHint = computed(() => {
   if (form.platform === 'openai') return t('admin.accounts.openai.apiKeyHint')
+  if (form.platform === 'copilot') return ''
+  if (form.platform === 'aggregator') return ''
   if (form.platform === 'gemini') return t('admin.accounts.gemini.apiKeyHint')
   return t('admin.accounts.apiKeyHint')
 })
@@ -2311,8 +2354,12 @@ watch(
     apiKeyBaseUrl.value =
       newPlatform === 'openai'
         ? 'https://api.openai.com'
+        : newPlatform === 'copilot'
+          ? 'https://api.githubcopilot.com'
         : newPlatform === 'gemini'
           ? 'https://generativelanguage.googleapis.com'
+          : newPlatform === 'aggregator'
+            ? ''
           : 'https://api.anthropic.com'
     // Clear model-related settings
     allowedModels.value = []
@@ -2330,6 +2377,11 @@ watch(
       antigravityWhitelistModels.value = []
       antigravityModelMappings.value = []
       antigravityModelRestrictionMode.value = 'mapping'
+    }
+
+    // Copilot/Aggregator are API-key only
+    if (newPlatform === 'copilot' || newPlatform === 'aggregator') {
+      accountCategory.value = 'apikey'
     }
     // Reset Anthropic-specific settings when switching to other platforms
     if (newPlatform !== 'anthropic') {
@@ -2730,27 +2782,40 @@ const handleSubmit = async () => {
     return
   }
 
+  if (form.platform === 'aggregator' && !apiKeyBaseUrl.value.trim()) {
+    appStore.showError(t('admin.accounts.upstream.pleaseEnterBaseUrl'))
+    return
+  }
+
   // Determine default base URL based on platform
   const defaultBaseUrl =
     form.platform === 'openai'
       ? 'https://api.openai.com'
+      : form.platform === 'copilot'
+        ? 'https://api.githubcopilot.com'
       : form.platform === 'gemini'
         ? 'https://generativelanguage.googleapis.com'
+        : form.platform === 'aggregator'
+          ? ''
         : 'https://api.anthropic.com'
 
   // Build credentials with optional model mapping
   const credentials: Record<string, unknown> = {
     base_url: apiKeyBaseUrl.value.trim() || defaultBaseUrl,
-    api_key: apiKeyValue.value.trim()
+    ...(form.platform === 'copilot'
+      ? { github_token: apiKeyValue.value.trim() }
+      : { api_key: apiKeyValue.value.trim() })
   }
   if (form.platform === 'gemini') {
     credentials.tier_id = geminiTierAIStudio.value
   }
 
   // Add model mapping if configured
-  const modelMapping = buildModelMappingObject(modelRestrictionMode.value, allowedModels.value, modelMappings.value)
-  if (modelMapping) {
-    credentials.model_mapping = modelMapping
+  if (form.platform !== 'copilot') {
+    const modelMapping = buildModelMappingObject(modelRestrictionMode.value, allowedModels.value, modelMappings.value)
+    if (modelMapping) {
+      credentials.model_mapping = modelMapping
+    }
   }
 
   // Add custom error codes if enabled

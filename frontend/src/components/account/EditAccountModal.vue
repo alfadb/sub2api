@@ -37,6 +37,10 @@
             :placeholder="
               account.platform === 'openai'
                 ? 'https://api.openai.com'
+                : account.platform === 'copilot'
+                  ? 'https://api.githubcopilot.com'
+                  : account.platform === 'aggregator'
+                    ? 'https://example.com'
                 : account.platform === 'gemini'
                   ? 'https://generativelanguage.googleapis.com'
                   : account.platform === 'antigravity'
@@ -55,6 +59,8 @@
             :placeholder="
               account.platform === 'openai'
                 ? 'sk-proj-...'
+                : account.platform === 'copilot'
+                  ? 'github_pat_...'
                 : account.platform === 'gemini'
                   ? 'AIza...'
                   : account.platform === 'antigravity'
@@ -66,7 +72,10 @@
         </div>
 
         <!-- Model Restriction Section (不适用于 Gemini 和 Antigravity) -->
-        <div v-if="account.platform !== 'gemini' && account.platform !== 'antigravity'" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+        <div
+          v-if="account.platform !== 'gemini' && account.platform !== 'antigravity' && account.platform !== 'copilot'"
+          class="border-t border-gray-200 pt-4 dark:border-dark-600"
+        >
           <label class="input-label">{{ t('admin.accounts.modelRestriction') }}</label>
 
           <!-- Mode Toggle -->
@@ -1050,6 +1059,8 @@ const authStore = useAuthStore()
 const baseUrlHint = computed(() => {
   if (!props.account) return t('admin.accounts.baseUrlHint')
   if (props.account.platform === 'openai') return t('admin.accounts.openai.baseUrlHint')
+  if (props.account.platform === 'copilot') return ''
+  if (props.account.platform === 'aggregator') return ''
   if (props.account.platform === 'gemini') return t('admin.accounts.gemini.baseUrlHint')
   return t('admin.accounts.baseUrlHint')
 })
@@ -1138,7 +1149,9 @@ const tempUnschedPresets = computed(() => [
 // Computed: default base URL based on platform
 const defaultBaseUrl = computed(() => {
   if (props.account?.platform === 'openai') return 'https://api.openai.com'
+  if (props.account?.platform === 'copilot') return 'https://api.githubcopilot.com'
   if (props.account?.platform === 'gemini') return 'https://generativelanguage.googleapis.com'
+  if (props.account?.platform === 'aggregator') return ''
   return 'https://api.anthropic.com'
 })
 
@@ -1233,8 +1246,12 @@ watch(
         const platformDefaultUrl =
           newAccount.platform === 'openai'
             ? 'https://api.openai.com'
+            : newAccount.platform === 'copilot'
+              ? 'https://api.githubcopilot.com'
             : newAccount.platform === 'gemini'
               ? 'https://generativelanguage.googleapis.com'
+              : newAccount.platform === 'aggregator'
+                ? ''
               : 'https://api.anthropic.com'
         editBaseUrl.value = (credentials.base_url as string) || platformDefaultUrl
 
@@ -1279,8 +1296,12 @@ watch(
         const platformDefaultUrl =
           newAccount.platform === 'openai'
             ? 'https://api.openai.com'
+            : newAccount.platform === 'copilot'
+              ? 'https://api.githubcopilot.com'
             : newAccount.platform === 'gemini'
               ? 'https://generativelanguage.googleapis.com'
+              : newAccount.platform === 'aggregator'
+                ? ''
               : 'https://api.anthropic.com'
         editBaseUrl.value = platformDefaultUrl
         modelRestrictionMode.value = 'whitelist'
@@ -1575,7 +1596,10 @@ const handleSubmit = async () => {
     if (props.account.type === 'apikey') {
       const currentCredentials = (props.account.credentials as Record<string, unknown>) || {}
       const newBaseUrl = editBaseUrl.value.trim() || defaultBaseUrl.value
-      const modelMapping = buildModelMappingObject(modelRestrictionMode.value, allowedModels.value, modelMappings.value)
+      const modelMapping =
+        props.account.platform === 'copilot'
+          ? null
+          : buildModelMappingObject(modelRestrictionMode.value, allowedModels.value, modelMappings.value)
 
       // Always update credentials for apikey type to handle model mapping changes
       const newCredentials: Record<string, unknown> = {
@@ -1583,12 +1607,13 @@ const handleSubmit = async () => {
       }
 
       // Handle API key
+      const tokenField = props.account.platform === 'copilot' ? 'github_token' : 'api_key'
       if (editApiKey.value.trim()) {
-        // User provided a new API key
-        newCredentials.api_key = editApiKey.value.trim()
-      } else if (currentCredentials.api_key) {
-        // Preserve existing api_key
-        newCredentials.api_key = currentCredentials.api_key
+        // User provided a new key/token
+        newCredentials[tokenField] = editApiKey.value.trim()
+      } else if (currentCredentials[tokenField]) {
+        // Preserve existing
+        newCredentials[tokenField] = currentCredentials[tokenField]
       } else {
         appStore.showError(t('admin.accounts.apiKeyIsRequired'))
         submitting.value = false

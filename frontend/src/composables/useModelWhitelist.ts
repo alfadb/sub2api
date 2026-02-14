@@ -315,6 +315,8 @@ export const commonErrorCodes = [
 export function getModelsByPlatform(platform: string): string[] {
   switch (platform) {
     case 'openai': return openaiModels
+    case 'copilot': return []
+    case 'aggregator': return openaiModels
     case 'anthropic':
     case 'claude': return claudeModels
     case 'gemini': return geminiModels

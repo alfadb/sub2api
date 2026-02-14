@@ -47,6 +47,8 @@ const props = defineProps<Props>()
 const platformLabel = computed(() => {
   if (props.platform === 'anthropic') return 'Anthropic'
   if (props.platform === 'openai') return 'OpenAI'
+  if (props.platform === 'copilot') return 'Copilot'
+  if (props.platform === 'aggregator') return 'Aggregator'
   if (props.platform === 'antigravity') return 'Antigravity'
   return 'Gemini'
 })
@@ -71,6 +73,12 @@ const platformClass = computed(() => {
   if (props.platform === 'openai') {
     return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
   }
+  if (props.platform === 'copilot') {
+    return 'bg-gray-100 text-gray-800 dark:bg-dark-600 dark:text-gray-200'
+  }
+  if (props.platform === 'aggregator') {
+    return 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400'
+  }
   if (props.platform === 'antigravity') {
     return 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
   }
@@ -83,6 +91,12 @@ const typeClass = computed(() => {
   }
   if (props.platform === 'openai') {
     return 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400'
+  }
+  if (props.platform === 'copilot') {
+    return 'bg-gray-100 text-gray-700 dark:bg-dark-600 dark:text-gray-200'
+  }
+  if (props.platform === 'aggregator') {
+    return 'bg-indigo-100 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400'
   }
   if (props.platform === 'antigravity') {
     return 'bg-purple-100 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400'

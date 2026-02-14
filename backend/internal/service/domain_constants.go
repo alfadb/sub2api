@@ -22,6 +22,8 @@ const (
 const (
 	PlatformAnthropic   = domain.PlatformAnthropic
 	PlatformOpenAI      = domain.PlatformOpenAI
+	PlatformCopilot     = domain.PlatformCopilot
+	PlatformAggregator  = domain.PlatformAggregator
 	PlatformGemini      = domain.PlatformGemini
 	PlatformAntigravity = domain.PlatformAntigravity
 )

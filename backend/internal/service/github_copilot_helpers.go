@@ -47,6 +47,9 @@ func isGitHubCopilotAccount(account *Account) bool {
 	if account.Type != AccountTypeAPIKey {
 		return false
 	}
+	if account.Platform == PlatformCopilot {
+		return true
+	}
 	baseURL := strings.TrimSpace(account.GetCredential("base_url"))
 	if baseURL == "" {
 		return false
@@ -211,6 +214,23 @@ func IsGitHubCopilotBaseURL(raw string) bool {
 
 func IsGitHubCopilotAccount(account *Account) bool {
 	return isGitHubCopilotAccount(account)
+}
+
+func githubCopilotModelsURLFromBaseURL(normalizedBaseURL string) string {
+	base := strings.TrimRight(strings.TrimSpace(normalizedBaseURL), "/")
+	if strings.HasSuffix(base, "/models") {
+		if strings.HasSuffix(base, "/v1/models") {
+			base = strings.TrimSuffix(base, "/v1/models")
+			base = strings.TrimRight(base, "/")
+			return base + "/models"
+		}
+		return base
+	}
+	if strings.HasSuffix(base, "/v1") {
+		base = strings.TrimSuffix(base, "/v1")
+		base = strings.TrimRight(base, "/")
+	}
+	return base + "/models"
 }
 
 func applyGitHubCopilotHeaders(req *http.Request, vision bool, initiator string) {

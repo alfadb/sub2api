@@ -8,8 +8,12 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 )
 
 const (
@@ -100,6 +104,120 @@ func (p *GitHubCopilotTokenProvider) Invalidate(ctx context.Context, account *Ac
 		return
 	}
 	_ = p.tokenCache.DeleteAccessToken(ctx, GitHubCopilotTokenCacheKey(account))
+}
+
+func (p *GitHubCopilotTokenProvider) ListModels(ctx context.Context, account *Account) ([]openai.Model, error) {
+	if p == nil {
+		return nil, errors.New("github copilot token provider is nil")
+	}
+	if account == nil {
+		return nil, errors.New("account is nil")
+	}
+	if !isGitHubCopilotAccount(account) {
+		return nil, errors.New("not a github copilot apikey account")
+	}
+	if p.httpUpstream == nil {
+		return nil, errors.New("http upstream is nil")
+	}
+
+	token, err := p.GetAccessToken(ctx, account)
+	if err != nil {
+		return nil, err
+	}
+
+	baseURL := strings.TrimSpace(account.GetCredential("base_url"))
+	if baseURL == "" {
+		baseURL = "https://api.githubcopilot.com"
+	}
+	normalizedBaseURL, err := urlvalidator.ValidateHTTPSURL(baseURL, urlvalidator.ValidationOptions{
+		AllowedHosts:     []string{"api.githubcopilot.com", "*.githubcopilot.com"},
+		RequireAllowlist: true,
+		AllowPrivate:     false,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("invalid base_url: %w", err)
+	}
+
+	modelsURL := githubCopilotModelsURLFromBaseURL(normalizedBaseURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, modelsURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	applyGitHubCopilotHeaders(req, false, "user")
+	req.Header.Set("authorization", "Bearer "+strings.TrimSpace(token))
+	if strings.TrimSpace(req.Header.Get("accept")) == "" {
+		req.Header.Set("accept", "application/json")
+	}
+
+	proxyURL := ""
+	if account.ProxyID != nil && account.Proxy != nil {
+		proxyURL = account.Proxy.URL()
+	}
+
+	resp, err := p.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
+	if err != nil {
+		return nil, fmt.Errorf("copilot models request failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, githubCopilotTokenMaxBodyLen))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		msg := strings.TrimSpace(ExtractUpstreamErrorMessage(body))
+		msg = sanitizeUpstreamErrorMessage(msg)
+		if msg == "" {
+			msg = strings.TrimSpace(string(body))
+			msg = sanitizeUpstreamErrorMessage(msg)
+		}
+		if msg == "" {
+			msg = "models request failed"
+		}
+		return nil, fmt.Errorf("copilot models request failed: status=%d message=%s", resp.StatusCode, msg)
+	}
+
+	type copilotModel struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	var parsed struct {
+		Data   []copilotModel `json:"data"`
+		Models []copilotModel `json:"models"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return nil, fmt.Errorf("parse copilot models response: %w", err)
+	}
+	src := parsed.Data
+	if len(src) == 0 {
+		src = parsed.Models
+	}
+	if len(src) == 0 {
+		return nil, errors.New("copilot models response is empty")
+	}
+
+	seen := make(map[string]struct{}, len(src))
+	result := make([]openai.Model, 0, len(src))
+	for _, m := range src {
+		id := strings.TrimSpace(m.ID)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		display := strings.TrimSpace(m.Name)
+		if display == "" {
+			display = id
+		}
+		result = append(result, openai.Model{ID: id, Object: "model", Type: "model", DisplayName: display})
+	}
+	if len(result) == 0 {
+		return nil, errors.New("copilot models response contained no model ids")
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].ID < result[j].ID
+	})
+	return result, nil
 }
 
 func (p *GitHubCopilotTokenProvider) exchangeAndCacheCopilotToken(ctx context.Context, account *Account, githubToken, cacheKey string) (string, error) {

@@ -154,7 +154,7 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 	}
 
 	// Route to platform-specific test method
-	if account.IsOpenAI() {
+	if account.Platform == PlatformOpenAI || account.Platform == PlatformCopilot || account.Platform == PlatformAggregator || isGitHubCopilotAccount(account) {
 		return s.testOpenAIAccountConnection(c, account, modelID)
 	}
 
@@ -349,7 +349,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			}
 		}
 		if authToken == "" {
-			authToken = account.GetOpenAIApiKey()
+			authToken = strings.TrimSpace(account.GetCredential("api_key"))
 			if authToken == "" {
 				if isGitHubCopilot {
 					return s.sendErrorAndEnd(c, "No GitHub token or Copilot bearer token available")
@@ -358,9 +358,13 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			}
 		}
 
-		baseURL := account.GetOpenAIBaseURL()
+		baseURL := strings.TrimSpace(account.GetCredential("base_url"))
 		if baseURL == "" {
-			baseURL = "https://api.openai.com"
+			if account.Platform == PlatformCopilot {
+				baseURL = "https://api.githubcopilot.com"
+			} else {
+				baseURL = "https://api.openai.com"
+			}
 		}
 		normalizedBaseURL, err := s.validateUpstreamBaseURL(baseURL)
 		if err != nil {

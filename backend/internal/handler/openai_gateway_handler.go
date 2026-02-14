@@ -214,7 +214,14 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	for {
 		// Select account supporting the requested model
 		log.Printf("[OpenAI Handler] Selecting account: groupID=%v model=%s", apiKey.GroupID, reqModel)
-		selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), apiKey.GroupID, sessionHash, reqModel, failedAccountIDs)
+		platform := service.PlatformOpenAI
+		if apiKey != nil && apiKey.Group != nil {
+			platform = strings.TrimSpace(apiKey.Group.Platform)
+		}
+		if platform != service.PlatformCopilot && platform != service.PlatformAggregator {
+			platform = service.PlatformOpenAI
+		}
+		selection, err := h.gatewayService.SelectAccountWithLoadAwarenessForPlatform(c.Request.Context(), apiKey.GroupID, platform, sessionHash, reqModel, failedAccountIDs)
 		if err != nil {
 			log.Printf("[OpenAI Handler] SelectAccount failed: %v", err)
 			if len(failedAccountIDs) == 0 {
@@ -274,7 +281,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				h.concurrencyHelper.DecrementAccountWaitCount(c.Request.Context(), account.ID)
 				accountWaitCounted = false
 			}
-			if err := h.gatewayService.BindStickySession(c.Request.Context(), apiKey.GroupID, sessionHash, account.ID); err != nil {
+			if err := h.gatewayService.BindStickySessionForPlatform(c.Request.Context(), apiKey.GroupID, platform, sessionHash, account.ID); err != nil {
 				log.Printf("Bind sticky session failed: %v", err)
 			}
 		}

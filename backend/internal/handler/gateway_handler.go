@@ -704,8 +704,18 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 		return
 	}
 
+	if platform == service.PlatformCopilot {
+		if models, err := h.gatewayService.ListGitHubCopilotModels(c.Request.Context(), groupID); err == nil && len(models) > 0 {
+			c.JSON(http.StatusOK, gin.H{
+				"object": "list",
+				"data":   models,
+			})
+			return
+		}
+	}
+
 	// Fallback to default models
-	if platform == "openai" {
+	if platform == service.PlatformOpenAI || platform == service.PlatformCopilot || platform == service.PlatformAggregator {
 		c.JSON(http.StatusOK, gin.H{
 			"object": "list",
 			"data":   openai.DefaultModels,

@@ -17,6 +17,8 @@ func ensureSimpleModeDefaultGroups(ctx context.Context, client *dbent.Client) er
 	requiredByPlatform := map[string]int{
 		service.PlatformAnthropic:   1,
 		service.PlatformOpenAI:      1,
+		service.PlatformCopilot:     1,
+		service.PlatformAggregator:  1,
 		service.PlatformGemini:      1,
 		service.PlatformAntigravity: 2,
 	}

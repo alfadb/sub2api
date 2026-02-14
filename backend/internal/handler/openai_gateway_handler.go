@@ -62,7 +62,7 @@ func NewOpenAIGatewayHandler(
 func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	// Get apiKey and user from context (set by ApiKeyAuth middleware)
 	apiKey, ok := middleware2.GetAPIKeyFromContext(c)
-	if !ok {
+	if !ok || apiKey == nil {
 		h.errorResponse(c, http.StatusUnauthorized, "authentication_error", "Invalid API key")
 		return
 	}
@@ -215,7 +215,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		// Select account supporting the requested model
 		log.Printf("[OpenAI Handler] Selecting account: groupID=%v model=%s", apiKey.GroupID, reqModel)
 		platform := service.PlatformOpenAI
-		if apiKey != nil && apiKey.Group != nil {
+		if apiKey.Group != nil {
 			platform = strings.TrimSpace(apiKey.Group.Platform)
 		}
 		if platform != service.PlatformCopilot && platform != service.PlatformAggregator {

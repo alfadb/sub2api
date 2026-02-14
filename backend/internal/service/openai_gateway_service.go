@@ -187,6 +187,25 @@ type OpenAIGatewayService struct {
 	toolCorrector       *CodexToolCorrector
 }
 
+func openaiProtocolPlatform(raw string) string {
+	platform := strings.ToLower(strings.TrimSpace(raw))
+	switch platform {
+	case PlatformCopilot:
+		return PlatformCopilot
+	case PlatformAggregator:
+		return PlatformAggregator
+	default:
+		return PlatformOpenAI
+	}
+}
+
+func openaiStickySessionKey(platform string, sessionHash string) string {
+	if strings.TrimSpace(sessionHash) == "" {
+		return ""
+	}
+	return openaiProtocolPlatform(platform) + ":" + sessionHash
+}
+
 // NewOpenAIGatewayService creates a new OpenAIGatewayService
 func NewOpenAIGatewayService(
 	accountRepo AccountRepository,
@@ -255,10 +274,15 @@ func (s *OpenAIGatewayService) GenerateSessionHash(c *gin.Context, reqBody map[s
 
 // BindStickySession sets session -> account binding with standard TTL.
 func (s *OpenAIGatewayService) BindStickySession(ctx context.Context, groupID *int64, sessionHash string, accountID int64) error {
-	if sessionHash == "" || accountID <= 0 {
+	return s.BindStickySessionForPlatform(ctx, groupID, PlatformOpenAI, sessionHash, accountID)
+}
+
+func (s *OpenAIGatewayService) BindStickySessionForPlatform(ctx context.Context, groupID *int64, platform string, sessionHash string, accountID int64) error {
+	cacheKey := openaiStickySessionKey(platform, sessionHash)
+	if cacheKey == "" || accountID <= 0 {
 		return nil
 	}
-	return s.cache.SetSessionAccountID(ctx, derefGroupID(groupID), "openai:"+sessionHash, accountID, openaiStickySessionTTL)
+	return s.cache.SetSessionAccountID(ctx, derefGroupID(groupID), cacheKey, accountID, openaiStickySessionTTL)
 }
 
 // SelectAccount selects an OpenAI account with sticky session support
@@ -274,24 +298,28 @@ func (s *OpenAIGatewayService) SelectAccountForModel(ctx context.Context, groupI
 // SelectAccountForModelWithExclusions selects an account supporting the requested model while excluding specified accounts.
 // SelectAccountForModelWithExclusions 选择支持指定模型的账号，同时排除指定的账号。
 func (s *OpenAIGatewayService) SelectAccountForModelWithExclusions(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}) (*Account, error) {
-	cacheKey := "openai:" + sessionHash
+	return s.SelectAccountForModelWithExclusionsForPlatform(ctx, groupID, PlatformOpenAI, sessionHash, requestedModel, excludedIDs)
+}
+
+func (s *OpenAIGatewayService) SelectAccountForModelWithExclusionsForPlatform(ctx context.Context, groupID *int64, platform string, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}) (*Account, error) {
+	cacheKey := openaiStickySessionKey(platform, sessionHash)
 
 	// 1. 尝试粘性会话命中
 	// Try sticky session hit
-	if account := s.tryStickySessionHit(ctx, groupID, sessionHash, cacheKey, requestedModel, excludedIDs); account != nil {
+	if account := s.tryStickySessionHit(ctx, groupID, platform, sessionHash, cacheKey, requestedModel, excludedIDs); account != nil {
 		return account, nil
 	}
 
 	// 2. 获取可调度的 OpenAI 账号
 	// Get schedulable OpenAI accounts
-	accounts, err := s.listSchedulableAccounts(ctx, groupID)
+	accounts, err := s.listSchedulableAccounts(ctx, groupID, platform)
 	if err != nil {
 		return nil, fmt.Errorf("query accounts failed: %w", err)
 	}
 
 	// 3. 按优先级 + LRU 选择最佳账号
 	// Select by priority + LRU
-	selected := s.selectBestAccount(accounts, requestedModel, excludedIDs)
+	selected := s.selectBestAccount(accounts, platform, requestedModel, excludedIDs)
 
 	if selected == nil {
 		if requestedModel != "" {
@@ -302,7 +330,7 @@ func (s *OpenAIGatewayService) SelectAccountForModelWithExclusions(ctx context.C
 
 	// 4. 设置粘性会话绑定
 	// Set sticky session binding
-	if sessionHash != "" {
+	if cacheKey != "" {
 		_ = s.cache.SetSessionAccountID(ctx, derefGroupID(groupID), cacheKey, selected.ID, openaiStickySessionTTL)
 	}
 
@@ -314,8 +342,8 @@ func (s *OpenAIGatewayService) SelectAccountForModelWithExclusions(ctx context.C
 //
 // tryStickySessionHit attempts to get account from sticky session.
 // Returns account if hit and usable; clears session and returns nil if account is unavailable.
-func (s *OpenAIGatewayService) tryStickySessionHit(ctx context.Context, groupID *int64, sessionHash, cacheKey, requestedModel string, excludedIDs map[int64]struct{}) *Account {
-	if sessionHash == "" {
+func (s *OpenAIGatewayService) tryStickySessionHit(ctx context.Context, groupID *int64, platform string, sessionHash, cacheKey, requestedModel string, excludedIDs map[int64]struct{}) *Account {
+	if cacheKey == "" {
 		return nil
 	}
 
@@ -342,7 +370,7 @@ func (s *OpenAIGatewayService) tryStickySessionHit(ctx context.Context, groupID 
 
 	// 验证账号是否可用于当前请求
 	// Verify account is usable for current request
-	if !account.IsSchedulable() || !account.IsOpenAI() {
+	if !account.IsSchedulable() || account.Platform != openaiProtocolPlatform(platform) {
 		return nil
 	}
 	if requestedModel != "" && !account.IsModelSupported(requestedModel) {
@@ -360,8 +388,9 @@ func (s *OpenAIGatewayService) tryStickySessionHit(ctx context.Context, groupID 
 //
 // selectBestAccount selects the best account from candidates (priority + LRU).
 // Returns nil if no available account.
-func (s *OpenAIGatewayService) selectBestAccount(accounts []Account, requestedModel string, excludedIDs map[int64]struct{}) *Account {
+func (s *OpenAIGatewayService) selectBestAccount(accounts []Account, platform string, requestedModel string, excludedIDs map[int64]struct{}) *Account {
 	var selected *Account
+	wantPlatform := openaiProtocolPlatform(platform)
 
 	for i := range accounts {
 		acc := &accounts[i]
@@ -374,7 +403,7 @@ func (s *OpenAIGatewayService) selectBestAccount(accounts []Account, requestedMo
 
 		// 调度器快照可能暂时过时，这里重新检查可调度性和平台
 		// Scheduler snapshots can be temporarily stale; re-check schedulability and platform
-		if !acc.IsSchedulable() || !acc.IsOpenAI() {
+		if !acc.IsSchedulable() || acc.Platform != wantPlatform {
 			continue
 		}
 
@@ -434,15 +463,19 @@ func (s *OpenAIGatewayService) isBetterAccount(candidate, current *Account) bool
 
 // SelectAccountWithLoadAwareness selects an account with load-awareness and wait plan.
 func (s *OpenAIGatewayService) SelectAccountWithLoadAwareness(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}) (*AccountSelectionResult, error) {
+	return s.SelectAccountWithLoadAwarenessForPlatform(ctx, groupID, PlatformOpenAI, sessionHash, requestedModel, excludedIDs)
+}
+
+func (s *OpenAIGatewayService) SelectAccountWithLoadAwarenessForPlatform(ctx context.Context, groupID *int64, platform string, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}) (*AccountSelectionResult, error) {
 	cfg := s.schedulingConfig()
 	var stickyAccountID int64
 	if sessionHash != "" && s.cache != nil {
-		if accountID, err := s.cache.GetSessionAccountID(ctx, derefGroupID(groupID), "openai:"+sessionHash); err == nil {
+		if accountID, err := s.cache.GetSessionAccountID(ctx, derefGroupID(groupID), openaiStickySessionKey(platform, sessionHash)); err == nil {
 			stickyAccountID = accountID
 		}
 	}
 	if s.concurrencyService == nil || !cfg.LoadBatchEnabled {
-		account, err := s.SelectAccountForModelWithExclusions(ctx, groupID, sessionHash, requestedModel, excludedIDs)
+		account, err := s.SelectAccountForModelWithExclusionsForPlatform(ctx, groupID, platform, sessionHash, requestedModel, excludedIDs)
 		if err != nil {
 			return nil, err
 		}
@@ -479,7 +512,7 @@ func (s *OpenAIGatewayService) SelectAccountWithLoadAwareness(ctx context.Contex
 		}, nil
 	}
 
-	accounts, err := s.listSchedulableAccounts(ctx, groupID)
+	accounts, err := s.listSchedulableAccounts(ctx, groupID, platform)
 	if err != nil {
 		return nil, err
 	}
@@ -497,19 +530,19 @@ func (s *OpenAIGatewayService) SelectAccountWithLoadAwareness(ctx context.Contex
 
 	// ============ Layer 1: Sticky session ============
 	if sessionHash != "" {
-		accountID, err := s.cache.GetSessionAccountID(ctx, derefGroupID(groupID), "openai:"+sessionHash)
+		accountID, err := s.cache.GetSessionAccountID(ctx, derefGroupID(groupID), openaiStickySessionKey(platform, sessionHash))
 		if err == nil && accountID > 0 && !isExcluded(accountID) {
 			account, err := s.getSchedulableAccount(ctx, accountID)
 			if err == nil {
 				clearSticky := shouldClearStickySession(account, requestedModel)
 				if clearSticky {
-					_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), "openai:"+sessionHash)
+					_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), openaiStickySessionKey(platform, sessionHash))
 				}
-				if !clearSticky && account.IsSchedulable() && account.IsOpenAI() &&
+				if !clearSticky && account.IsSchedulable() && account.Platform == openaiProtocolPlatform(platform) &&
 					(requestedModel == "" || account.IsModelSupported(requestedModel)) {
 					result, err := s.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
 					if err == nil && result.Acquired {
-						_ = s.cache.RefreshSessionTTL(ctx, derefGroupID(groupID), "openai:"+sessionHash, openaiStickySessionTTL)
+						_ = s.cache.RefreshSessionTTL(ctx, derefGroupID(groupID), openaiStickySessionKey(platform, sessionHash), openaiStickySessionTTL)
 						return &AccountSelectionResult{
 							Account:     account,
 							Acquired:    true,
@@ -573,7 +606,7 @@ func (s *OpenAIGatewayService) SelectAccountWithLoadAwareness(ctx context.Contex
 			result, err := s.tryAcquireAccountSlot(ctx, acc.ID, acc.Concurrency)
 			if err == nil && result.Acquired {
 				if sessionHash != "" {
-					_ = s.cache.SetSessionAccountID(ctx, derefGroupID(groupID), "openai:"+sessionHash, acc.ID, openaiStickySessionTTL)
+					_ = s.cache.SetSessionAccountID(ctx, derefGroupID(groupID), openaiStickySessionKey(platform, sessionHash), acc.ID, openaiStickySessionTTL)
 				}
 				return &AccountSelectionResult{
 					Account:     acc,
@@ -623,7 +656,7 @@ func (s *OpenAIGatewayService) SelectAccountWithLoadAwareness(ctx context.Contex
 				result, err := s.tryAcquireAccountSlot(ctx, item.account.ID, item.account.Concurrency)
 				if err == nil && result.Acquired {
 					if sessionHash != "" {
-						_ = s.cache.SetSessionAccountID(ctx, derefGroupID(groupID), "openai:"+sessionHash, item.account.ID, openaiStickySessionTTL)
+						_ = s.cache.SetSessionAccountID(ctx, derefGroupID(groupID), openaiStickySessionKey(platform, sessionHash), item.account.ID, openaiStickySessionTTL)
 					}
 					return &AccountSelectionResult{
 						Account:     item.account,
@@ -652,19 +685,19 @@ func (s *OpenAIGatewayService) SelectAccountWithLoadAwareness(ctx context.Contex
 	return nil, errors.New("no available accounts")
 }
 
-func (s *OpenAIGatewayService) listSchedulableAccounts(ctx context.Context, groupID *int64) ([]Account, error) {
+func (s *OpenAIGatewayService) listSchedulableAccounts(ctx context.Context, groupID *int64, platform string) ([]Account, error) {
 	if s.schedulerSnapshot != nil {
-		accounts, _, err := s.schedulerSnapshot.ListSchedulableAccounts(ctx, groupID, PlatformOpenAI, false)
+		accounts, _, err := s.schedulerSnapshot.ListSchedulableAccounts(ctx, groupID, openaiProtocolPlatform(platform), false)
 		return accounts, err
 	}
 	var accounts []Account
 	var err error
 	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
-		accounts, err = s.accountRepo.ListSchedulableByPlatform(ctx, PlatformOpenAI)
+		accounts, err = s.accountRepo.ListSchedulableByPlatform(ctx, openaiProtocolPlatform(platform))
 	} else if groupID != nil {
-		accounts, err = s.accountRepo.ListSchedulableByGroupIDAndPlatform(ctx, *groupID, PlatformOpenAI)
+		accounts, err = s.accountRepo.ListSchedulableByGroupIDAndPlatform(ctx, *groupID, openaiProtocolPlatform(platform))
 	} else {
-		accounts, err = s.accountRepo.ListSchedulableByPlatform(ctx, PlatformOpenAI)
+		accounts, err = s.accountRepo.ListSchedulableByPlatform(ctx, openaiProtocolPlatform(platform))
 	}
 	if err != nil {
 		return nil, fmt.Errorf("query accounts failed: %w", err)
@@ -724,7 +757,7 @@ func (s *OpenAIGatewayService) GetAccessToken(ctx context.Context, account *Acco
 			if err == nil && strings.TrimSpace(copilotToken) != "" {
 				return copilotToken, "github_copilot", nil
 			}
-			apiKey := strings.TrimSpace(account.GetOpenAIApiKey())
+			apiKey := strings.TrimSpace(account.GetCredential("api_key"))
 			if apiKey == "" {
 				if err != nil {
 					return "", "", err
@@ -733,7 +766,7 @@ func (s *OpenAIGatewayService) GetAccessToken(ctx context.Context, account *Acco
 			}
 			return apiKey, "apikey", nil
 		}
-		apiKey := account.GetOpenAIApiKey()
+		apiKey := strings.TrimSpace(account.GetCredential("api_key"))
 		if apiKey == "" {
 			return "", "", errors.New("api_key not found in credentials")
 		}
@@ -1058,7 +1091,10 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 		targetURL = chatgptCodexURL
 	case AccountTypeAPIKey:
 		// API Key accounts use Platform API or custom base URL
-		baseURL := account.GetOpenAIBaseURL()
+		baseURL := strings.TrimSpace(account.GetCredential("base_url"))
+		if baseURL == "" && account.Platform == PlatformCopilot {
+			baseURL = "https://api.githubcopilot.com"
+		}
 		if baseURL == "" {
 			targetURL = openaiPlatformAPIURL
 		} else {
@@ -1164,7 +1200,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(ctx context.Context, resp *ht
 
 	if status, errType, errMsg, matched := applyErrorPassthroughRule(
 		c,
-		PlatformOpenAI,
+		account.Platform,
 		resp.StatusCode,
 		body,
 		http.StatusBadGateway,

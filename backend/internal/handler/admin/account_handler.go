@@ -1360,10 +1360,20 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 		return
 	}
 
-	// Handle OpenAI accounts
-	if account.IsOpenAI() {
+	if account.Platform == service.PlatformOpenAI || account.Platform == service.PlatformCopilot || account.Platform == service.PlatformAggregator || service.IsGitHubCopilotAccount(account) {
 		// For OAuth accounts: return default OpenAI models
 		if account.IsOAuth() {
+			response.Success(c, openai.DefaultModels)
+			return
+		}
+
+		if account.Platform == service.PlatformCopilot || service.IsGitHubCopilotAccount(account) {
+			if h.githubCopilotToken != nil {
+				if models, err := h.githubCopilotToken.ListModels(c.Request.Context(), account); err == nil && len(models) > 0 {
+					response.Success(c, models)
+					return
+				}
+			}
 			response.Success(c, openai.DefaultModels)
 			return
 		}

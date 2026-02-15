@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -144,18 +145,27 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		return
 	}
 
-	// 检查平台：优先使用强制平台（/antigravity 路由，中间件已设置 request.Context），否则要求 gemini 分组
-	if !middleware.HasForcePlatform(c) {
+	modelName, action, err := parseGeminiModelAction(strings.TrimPrefix(c.Param("modelAction"), "/"))
+	if err != nil {
+		googleError(c, http.StatusNotFound, err.Error())
+		return
+	}
+
+	hadForcePlatform := middleware.HasForcePlatform(c)
+	if !hadForcePlatform {
 		if apiKey.Group == nil || apiKey.Group.Platform != service.PlatformGemini {
 			googleError(c, http.StatusBadRequest, "API key group platform is not gemini")
 			return
 		}
 	}
 
-	modelName, action, err := parseGeminiModelAction(strings.TrimPrefix(c.Param("modelAction"), "/"))
-	if err != nil {
-		googleError(c, http.StatusNotFound, err.Error())
-		return
+	if ns := service.ParseModelNamespace(modelName); ns.HasNamespace {
+		modelName = ns.Model
+		if ns.Platform != "" && !hadForcePlatform {
+			ctx := context.WithValue(c.Request.Context(), ctxkey.ForcePlatform, ns.Platform)
+			c.Request = c.Request.WithContext(ctx)
+			c.Set(string(middleware.ContextKeyForcePlatform), ns.Platform)
+		}
 	}
 
 	stream := action == "streamGenerateContent"
@@ -434,8 +444,10 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		}
 		if account.Platform == service.PlatformAntigravity && account.Type != service.AccountTypeAPIKey {
 			result, err = h.antigravityGatewayService.ForwardGemini(requestCtx, c, account, modelName, action, stream, body, hasBoundSession)
-		} else {
+		} else if account.Platform == service.PlatformGemini {
 			result, err = h.geminiCompatService.ForwardNative(requestCtx, c, account, modelName, action, stream, body)
+		} else {
+			result, err = h.forwardGeminiNativeCrossPlatform(requestCtx, c, account, modelName, action, stream, body)
 		}
 		if accountReleaseFunc != nil {
 			accountReleaseFunc()
@@ -486,29 +498,159 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 			}
 		}
 
-		// 6) record usage async (Gemini 使用长上下文双倍计费)
 		go func(result *service.ForwardResult, usedAccount *service.Account, ua, ip string, fcb bool) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 
-			if err := h.gatewayService.RecordUsageWithLongContext(ctx, &service.RecordUsageLongContextInput{
-				Result:                result,
-				APIKey:                apiKey,
-				User:                  apiKey.User,
-				Account:               usedAccount,
-				Subscription:          subscription,
-				UserAgent:             ua,
-				IPAddress:             ip,
-				LongContextThreshold:  200000, // Gemini 200K 阈值
-				LongContextMultiplier: 2.0,    // 超出部分双倍计费
-				ForceCacheBilling:     fcb,
-				APIKeyService:         h.apiKeyService,
+			if usedAccount.Platform == service.PlatformGemini || usedAccount.Platform == service.PlatformAntigravity {
+				if err := h.gatewayService.RecordUsageWithLongContext(ctx, &service.RecordUsageLongContextInput{
+					Result:                result,
+					APIKey:                apiKey,
+					User:                  apiKey.User,
+					Account:               usedAccount,
+					Subscription:          subscription,
+					UserAgent:             ua,
+					IPAddress:             ip,
+					LongContextThreshold:  200000,
+					LongContextMultiplier: 2.0,
+					ForceCacheBilling:     fcb,
+					APIKeyService:         h.apiKeyService,
+				}); err != nil {
+					log.Printf("Record usage failed: %v", err)
+				}
+				return
+			}
+
+			if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
+				Result:            result,
+				APIKey:            apiKey,
+				User:              apiKey.User,
+				Account:           usedAccount,
+				Subscription:      subscription,
+				UserAgent:         ua,
+				IPAddress:         ip,
+				ForceCacheBilling: fcb,
+				APIKeyService:     h.apiKeyService,
 			}); err != nil {
 				log.Printf("Record usage failed: %v", err)
 			}
 		}(result, account, userAgent, clientIP, forceCacheBilling)
 		return
 	}
+}
+
+func (h *GatewayHandler) forwardGeminiNativeCrossPlatform(ctx context.Context, c *gin.Context, account *service.Account, modelName string, action string, stream bool, body []byte) (*service.ForwardResult, error) {
+	startTime := time.Now()
+
+	claudeBody, err := service.ConvertGeminiNativeRequestToClaudeMessages(modelName, body)
+	if err != nil {
+		googleError(c, http.StatusBadRequest, err.Error())
+		return nil, err
+	}
+
+	parsed, err := service.ParseGatewayRequest(claudeBody, domain.PlatformAnthropic)
+	if err != nil {
+		googleError(c, http.StatusBadRequest, "Failed to parse request")
+		return nil, err
+	}
+
+	origWriter := c.Writer
+	cw := newCaptureWriter(origWriter)
+	c.Writer = cw
+	defer func() { c.Writer = origWriter }()
+
+	if action == "countTokens" {
+		var countErr error
+		if account.Platform == service.PlatformOpenAI || account.Platform == service.PlatformAggregator || (account.Platform == service.PlatformCopilot && !service.IsClaudeModelID(modelName)) {
+			countErr = h.openaiCompatService.ForwardCountTokens(ctx, c, account, parsed)
+		} else {
+			countErr = h.gatewayService.ForwardCountTokens(ctx, c, account, parsed)
+		}
+		c.Writer = origWriter
+
+		if countErr != nil {
+			var failoverErr *service.UpstreamFailoverError
+			if errors.As(countErr, &failoverErr) {
+				return nil, failoverErr
+			}
+			googleError(c, http.StatusBadGateway, "Upstream request failed")
+			return nil, countErr
+		}
+
+		var parsedResp map[string]any
+		if json.Unmarshal(cw.buf.Bytes(), &parsedResp) != nil {
+			googleError(c, http.StatusBadGateway, "Failed to parse upstream response")
+			return nil, errors.New("failed to parse countTokens response")
+		}
+		inputTokens, _ := parsedResp["input_tokens"].(float64)
+		c.JSON(http.StatusOK, map[string]any{"totalTokens": int(inputTokens)})
+		return &service.ForwardResult{
+			RequestID:    cw.header.Get("x-request-id"),
+			Usage:        service.ClaudeUsage{},
+			Model:        modelName,
+			Stream:       false,
+			Duration:     time.Since(startTime),
+			FirstTokenMs: nil,
+		}, nil
+	}
+
+	claudeStream := false
+	parsed.Stream = claudeStream
+	claudeReq := map[string]any{}
+	if json.Unmarshal(claudeBody, &claudeReq) == nil {
+		claudeReq["stream"] = false
+		claudeBody, _ = json.Marshal(claudeReq)
+		parsed.Body = claudeBody
+	}
+
+	var result *service.ForwardResult
+	if account.Platform == service.PlatformOpenAI || account.Platform == service.PlatformAggregator || (account.Platform == service.PlatformCopilot && !service.IsClaudeModelID(modelName)) {
+		result, err = h.openaiCompatService.Forward(ctx, c, account, parsed)
+	} else {
+		result, err = h.gatewayService.Forward(ctx, c, account, parsed)
+	}
+	c.Writer = origWriter
+
+	if err != nil {
+		var failoverErr *service.UpstreamFailoverError
+		if errors.As(err, &failoverErr) {
+			return nil, failoverErr
+		}
+		googleError(c, http.StatusBadGateway, "Upstream request failed")
+		return nil, err
+	}
+
+	if rid := strings.TrimSpace(cw.header.Get("x-request-id")); rid != "" {
+		c.Header("x-request-id", rid)
+	}
+
+	var claudeResp map[string]any
+	if err := json.Unmarshal(cw.buf.Bytes(), &claudeResp); err != nil {
+		googleError(c, http.StatusBadGateway, "Failed to parse upstream response")
+		return nil, err
+	}
+	geminiResp, err := service.ConvertClaudeMessageToGeminiResponse(claudeResp, &result.Usage)
+	if err != nil {
+		googleError(c, http.StatusBadGateway, "Failed to convert upstream response")
+		return nil, err
+	}
+
+	if !stream {
+		c.JSON(http.StatusOK, geminiResp)
+		return result, nil
+	}
+
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+	if b, err := json.Marshal(geminiResp); err == nil {
+		_, _ = fmt.Fprintf(c.Writer, "data: %s\n\n", b)
+		if flusher, ok := c.Writer.(http.Flusher); ok {
+			flusher.Flush()
+		}
+	}
+	return result, nil
 }
 
 func parseGeminiModelAction(rest string) (model string, action string, err error) {

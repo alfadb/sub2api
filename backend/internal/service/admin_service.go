@@ -178,6 +178,21 @@ type CreateAccountInput struct {
 	SkipMixedChannelCheck bool
 }
 
+func credentialString(m map[string]any, key string) string {
+	if m == nil {
+		return ""
+	}
+	v, ok := m[key]
+	if !ok || v == nil {
+		return ""
+	}
+	s, ok := v.(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(s)
+}
+
 type UpdateAccountInput struct {
 	Name                  string
 	Notes                 *string
@@ -1048,6 +1063,18 @@ func (s *adminServiceImpl) GetAccountsByIDs(ctx context.Context, ids []int64) ([
 }
 
 func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccountInput) (*Account, error) {
+	if input == nil {
+		return nil, errors.New("input is required")
+	}
+	if strings.TrimSpace(input.Platform) == PlatformAggregator && (input.Type == AccountTypeAPIKey || input.Type == AccountTypeUpstream) {
+		if credentialString(input.Credentials, "base_url") == "" {
+			return nil, errors.New("base_url is required for aggregator accounts")
+		}
+		if credentialString(input.Credentials, "api_key") == "" {
+			return nil, errors.New("api_key is required for aggregator accounts")
+		}
+	}
+
 	// 绑定分组
 	groupIDs := input.GroupIDs
 	// 如果没有指定分组,自动绑定对应平台的默认分组
@@ -1170,6 +1197,15 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	}
 	if input.AutoPauseOnExpired != nil {
 		account.AutoPauseOnExpired = *input.AutoPauseOnExpired
+	}
+
+	if account.Platform == PlatformAggregator && (account.Type == AccountTypeAPIKey || account.Type == AccountTypeUpstream) {
+		if strings.TrimSpace(account.GetCredential("base_url")) == "" {
+			return nil, errors.New("base_url is required for aggregator accounts")
+		}
+		if strings.TrimSpace(account.GetCredential("api_key")) == "" {
+			return nil, errors.New("api_key is required for aggregator accounts")
+		}
 	}
 
 	// 先验证分组是否存在（在任何写操作之前）

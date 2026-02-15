@@ -153,8 +153,20 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 		return s.sendErrorAndEnd(c, "Account not found")
 	}
 
+	if ns := ParseModelNamespace(modelID); ns.HasNamespace {
+		modelID = ns.Model
+	}
+
+	isCopilot := account.Platform == PlatformCopilot || isGitHubCopilotAccount(account)
+	if isCopilot {
+		if strings.TrimSpace(modelID) != "" && IsClaudeModelID(modelID) {
+			return s.testClaudeAccountConnection(c, account, modelID)
+		}
+		return s.testOpenAIAccountConnection(c, account, modelID)
+	}
+
 	// Route to platform-specific test method
-	if account.Platform == PlatformOpenAI || account.Platform == PlatformCopilot || account.Platform == PlatformAggregator || isGitHubCopilotAccount(account) {
+	if account.Platform == PlatformOpenAI || account.Platform == PlatformAggregator {
 		return s.testOpenAIAccountConnection(c, account, modelID)
 	}
 
@@ -328,6 +340,8 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	var apiURL string
 	var isOAuth bool
 	var chatgptAccountID string
+	var normalizedBaseURL string
+	var isGitHubCopilot bool
 
 	if account.IsOAuth() {
 		isOAuth = true
@@ -342,7 +356,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		chatgptAccountID = account.GetChatGPTAccountID()
 	} else if account.Type == "apikey" {
 		// API Key - use Platform API
-		isGitHubCopilot := isGitHubCopilotAccount(account)
+		isGitHubCopilot = isGitHubCopilotAccount(account)
 		if isGitHubCopilot && s.githubCopilotTokenProvider != nil {
 			if token, err := s.githubCopilotTokenProvider.GetAccessToken(ctx, account); err == nil && strings.TrimSpace(token) != "" {
 				authToken = token
@@ -362,14 +376,17 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		if baseURL == "" {
 			if account.Platform == PlatformCopilot {
 				baseURL = "https://api.githubcopilot.com"
+			} else if account.Platform == PlatformAggregator {
+				return s.sendErrorAndEnd(c, "Base URL is required")
 			} else {
 				baseURL = "https://api.openai.com"
 			}
 		}
-		normalizedBaseURL, err := s.validateUpstreamBaseURL(baseURL)
+		normalized, err := s.validateUpstreamBaseURL(baseURL)
 		if err != nil {
 			return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid base URL: %s", err.Error()))
 		}
+		normalizedBaseURL = normalized
 		apiURL = openaiResponsesURLFromBaseURL(normalizedBaseURL, isGitHubCopilot)
 	} else {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Unsupported account type: %s", account.Type))
@@ -424,6 +441,65 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		if account.Type == "apikey" && isGitHubCopilot {
+			rawUpstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(body))
+			if isResponsesAPIUnsupportedError(rawUpstreamMsg, body) {
+				chatURL := openaiChatCompletionsURLFromBaseURL(normalizedBaseURL, isGitHubCopilot)
+				payload := map[string]any{
+					"model": testModelID,
+					"messages": []any{
+						map[string]any{"role": "system", "content": openai.DefaultInstructions},
+						map[string]any{"role": "user", "content": "hi"},
+					},
+					"stream":     false,
+					"max_tokens": 16,
+				}
+				payloadBytes, _ := json.Marshal(payload)
+
+				req2, err2 := http.NewRequestWithContext(ctx, "POST", chatURL, bytes.NewReader(payloadBytes))
+				if err2 != nil {
+					return s.sendErrorAndEnd(c, "Failed to create request")
+				}
+				req2.Header.Set("Content-Type", "application/json")
+				req2.Header.Set("Authorization", "Bearer "+authToken)
+				req2.Header.Set("accept", "application/json")
+				applyGitHubCopilotHeaders(req2, false, "user")
+
+				resp2, err2 := s.httpUpstream.DoWithTLS(req2, proxyURL, account.ID, account.Concurrency, account.IsTLSFingerprintEnabled())
+				if err2 != nil {
+					return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err2.Error()))
+				}
+				defer func() { _ = resp2.Body.Close() }()
+				respBody2, _ := io.ReadAll(resp2.Body)
+				if resp2.StatusCode != http.StatusOK {
+					return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp2.StatusCode, string(respBody2)))
+				}
+				var data map[string]any
+				if err := json.Unmarshal(respBody2, &data); err != nil {
+					return s.sendErrorAndEnd(c, "Failed to parse upstream response")
+				}
+				if errData, ok := data["error"].(map[string]any); ok {
+					msg := "Unknown error"
+					if m, ok := errData["message"].(string); ok {
+						msg = m
+					}
+					return s.sendErrorAndEnd(c, msg)
+				}
+				choicesAny, _ := data["choices"].([]any)
+				if len(choicesAny) == 0 {
+					return s.sendErrorAndEnd(c, "Empty upstream response")
+				}
+				choice0, _ := choicesAny[0].(map[string]any)
+				msgAny, _ := choice0["message"].(map[string]any)
+				if msgAny != nil {
+					if text, _ := openAIChatMessageContentToText(msgAny["content"]); strings.TrimSpace(text) != "" {
+						s.sendEvent(c, TestEvent{Type: "content", Text: text})
+					}
+				}
+				s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+				return nil
+			}
+		}
 		return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
 	}
 

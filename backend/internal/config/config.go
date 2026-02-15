@@ -38,31 +38,32 @@ const (
 )
 
 type Config struct {
-	Server       ServerConfig               `mapstructure:"server"`
-	CORS         CORSConfig                 `mapstructure:"cors"`
-	Security     SecurityConfig             `mapstructure:"security"`
-	Billing      BillingConfig              `mapstructure:"billing"`
-	Turnstile    TurnstileConfig            `mapstructure:"turnstile"`
-	Database     DatabaseConfig             `mapstructure:"database"`
-	Redis        RedisConfig                `mapstructure:"redis"`
-	Ops          OpsConfig                  `mapstructure:"ops"`
-	JWT          JWTConfig                  `mapstructure:"jwt"`
-	Totp         TotpConfig                 `mapstructure:"totp"`
-	LinuxDo      LinuxDoConnectConfig       `mapstructure:"linuxdo_connect"`
-	Default      DefaultConfig              `mapstructure:"default"`
-	RateLimit    RateLimitConfig            `mapstructure:"rate_limit"`
-	Pricing      PricingConfig              `mapstructure:"pricing"`
-	Gateway      GatewayConfig              `mapstructure:"gateway"`
-	APIKeyAuth   APIKeyAuthCacheConfig      `mapstructure:"api_key_auth_cache"`
-	Dashboard    DashboardCacheConfig       `mapstructure:"dashboard_cache"`
-	DashboardAgg DashboardAggregationConfig `mapstructure:"dashboard_aggregation"`
-	UsageCleanup UsageCleanupConfig         `mapstructure:"usage_cleanup"`
-	Concurrency  ConcurrencyConfig          `mapstructure:"concurrency"`
-	TokenRefresh TokenRefreshConfig         `mapstructure:"token_refresh"`
-	RunMode      string                     `mapstructure:"run_mode" yaml:"run_mode"`
-	Timezone     string                     `mapstructure:"timezone"` // e.g. "Asia/Shanghai", "UTC"
-	Gemini       GeminiConfig               `mapstructure:"gemini"`
-	Update       UpdateConfig               `mapstructure:"update"`
+	Server              ServerConfig               `mapstructure:"server"`
+	CORS                CORSConfig                 `mapstructure:"cors"`
+	Security            SecurityConfig             `mapstructure:"security"`
+	Billing             BillingConfig              `mapstructure:"billing"`
+	Turnstile           TurnstileConfig            `mapstructure:"turnstile"`
+	Database            DatabaseConfig             `mapstructure:"database"`
+	Redis               RedisConfig                `mapstructure:"redis"`
+	Ops                 OpsConfig                  `mapstructure:"ops"`
+	JWT                 JWTConfig                  `mapstructure:"jwt"`
+	Totp                TotpConfig                 `mapstructure:"totp"`
+	LinuxDo             LinuxDoConnectConfig       `mapstructure:"linuxdo_connect"`
+	Default             DefaultConfig              `mapstructure:"default"`
+	RateLimit           RateLimitConfig            `mapstructure:"rate_limit"`
+	Pricing             PricingConfig              `mapstructure:"pricing"`
+	Gateway             GatewayConfig              `mapstructure:"gateway"`
+	APIKeyAuth          APIKeyAuthCacheConfig      `mapstructure:"api_key_auth_cache"`
+	Dashboard           DashboardCacheConfig       `mapstructure:"dashboard_cache"`
+	DashboardAgg        DashboardAggregationConfig `mapstructure:"dashboard_aggregation"`
+	UsageCleanup        UsageCleanupConfig         `mapstructure:"usage_cleanup"`
+	Concurrency         ConcurrencyConfig          `mapstructure:"concurrency"`
+	TokenRefresh        TokenRefreshConfig         `mapstructure:"token_refresh"`
+	CopilotModelRefresh CopilotModelRefreshConfig  `mapstructure:"copilot_model_refresh"`
+	RunMode             string                     `mapstructure:"run_mode" yaml:"run_mode"`
+	Timezone            string                     `mapstructure:"timezone"` // e.g. "Asia/Shanghai", "UTC"
+	Gemini              GeminiConfig               `mapstructure:"gemini"`
+	Update              UpdateConfig               `mapstructure:"update"`
 }
 
 type GeminiConfig struct {
@@ -126,6 +127,12 @@ type TokenRefreshConfig struct {
 	MaxRetries int `mapstructure:"max_retries"`
 	// 重试退避基础时间（秒）
 	RetryBackoffSeconds int `mapstructure:"retry_backoff_seconds"`
+}
+
+type CopilotModelRefreshConfig struct {
+	Enabled               bool `mapstructure:"enabled"`
+	CheckIntervalMinutes  int  `mapstructure:"check_interval_minutes"`
+	RequestTimeoutSeconds int  `mapstructure:"request_timeout_seconds"`
 }
 
 type PricingConfig struct {
@@ -924,6 +931,10 @@ func setDefaults() {
 	viper.SetDefault("token_refresh.refresh_before_expiry_hours", 0.5) // 提前30分钟刷新（适配Google 1小时token）
 	viper.SetDefault("token_refresh.max_retries", 3)                   // 最多重试3次
 	viper.SetDefault("token_refresh.retry_backoff_seconds", 2)         // 重试退避基础2秒
+
+	viper.SetDefault("copilot_model_refresh.enabled", true)
+	viper.SetDefault("copilot_model_refresh.check_interval_minutes", 360)
+	viper.SetDefault("copilot_model_refresh.request_timeout_seconds", 30)
 
 	// Gemini OAuth - configure via environment variables or config file
 	// GEMINI_OAUTH_CLIENT_ID and GEMINI_OAUTH_CLIENT_SECRET

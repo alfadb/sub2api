@@ -202,6 +202,28 @@ func TestAccountIsModelSupported(t *testing.T) {
 	}
 }
 
+func TestAccountIsModelSupported_CopilotAvailableModels(t *testing.T) {
+	account := &Account{
+		Platform: PlatformCopilot,
+		Type:     AccountTypeAPIKey,
+		Extra: map[string]any{
+			AccountExtraKeyAvailableModels: []any{"gpt-4o", "gpt-5.2"},
+		},
+	}
+	if !account.IsModelSupported("gpt-4o") {
+		t.Fatalf("expected gpt-4o supported")
+	}
+	if !account.IsModelSupported("  gpt-5.2  ") {
+		t.Fatalf("expected gpt-5.2 supported (trim)")
+	}
+	if account.IsModelSupported("o1") {
+		t.Fatalf("expected o1 not supported")
+	}
+	if account.IsModelSupported("") {
+		t.Fatalf("expected empty model not supported")
+	}
+}
+
 func TestAccountGetMappedModel(t *testing.T) {
 	tests := []struct {
 		name           string

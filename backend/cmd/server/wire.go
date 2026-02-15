@@ -69,6 +69,7 @@ func provideCleanup(
 	opsScheduledReport *service.OpsScheduledReportService,
 	schedulerSnapshot *service.SchedulerSnapshotService,
 	tokenRefresh *service.TokenRefreshService,
+	copilotModelRefresh *service.CopilotModelRefreshService,
 	accountExpiry *service.AccountExpiryService,
 	subscriptionExpiry *service.SubscriptionExpiryService,
 	usageCleanup *service.UsageCleanupService,
@@ -133,6 +134,12 @@ func provideCleanup(
 			}},
 			{"TokenRefreshService", func() error {
 				tokenRefresh.Stop()
+				return nil
+			}},
+			{"CopilotModelRefreshService", func() error {
+				if copilotModelRefresh != nil {
+					copilotModelRefresh.Stop()
+				}
 				return nil
 			}},
 			{"AccountExpiryService", func() error {

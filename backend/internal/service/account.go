@@ -52,6 +52,14 @@ type Account struct {
 	Groups        []*Group
 }
 
+const (
+	AccountExtraKeyAvailableModels          = "available_models"
+	AccountExtraKeyAvailableModelsUpdatedAt = "available_models_updated_at"
+	AccountExtraKeyAvailableModelsSource    = "available_models_source"
+	AccountExtraKeyAvailableModelsError     = "available_models_error"
+	AccountExtraKeyAvailableModelsErrorAt   = "available_models_error_at"
+)
+
 type TempUnschedulableRule struct {
 	ErrorCode       int      `json:"error_code"`
 	Keywords        []string `json:"keywords"`
@@ -288,6 +296,10 @@ func parseTempUnschedString(value any) string {
 }
 
 func parseTempUnschedStrings(value any) []string {
+	return parseStringSlice(value)
+}
+
+func parseStringSlice(value any) []string {
 	if value == nil {
 		return nil
 	}
@@ -382,9 +394,37 @@ func (a *Account) GetModelMapping() map[string]string {
 	return nil
 }
 
+func (a *Account) GetAvailableModels() []string {
+	if a == nil || a.Extra == nil {
+		return nil
+	}
+	raw, ok := a.Extra[AccountExtraKeyAvailableModels]
+	if !ok || raw == nil {
+		return nil
+	}
+	return parseStringSlice(raw)
+}
+
 // IsModelSupported 检查模型是否在 model_mapping 中（支持通配符）
 // 如果未配置 mapping，返回 true（允许所有模型）
 func (a *Account) IsModelSupported(requestedModel string) bool {
+	requestedModel = strings.TrimSpace(requestedModel)
+	if requestedModel == "" {
+		return false
+	}
+
+	if isGitHubCopilotAccount(a) {
+		if models := a.GetAvailableModels(); len(models) > 0 {
+			for _, id := range models {
+				if id == requestedModel {
+					return true
+				}
+			}
+			return false
+		}
+		return true
+	}
+
 	mapping := a.GetModelMapping()
 	if len(mapping) == 0 {
 		return true // 无映射 = 允许所有
@@ -405,6 +445,9 @@ func (a *Account) IsModelSupported(requestedModel string) bool {
 // GetMappedModel 获取映射后的模型名（支持通配符，最长优先匹配）
 // 如果未配置 mapping，返回原始模型名
 func (a *Account) GetMappedModel(requestedModel string) string {
+	if isGitHubCopilotAccount(a) {
+		return requestedModel
+	}
 	mapping := a.GetModelMapping()
 	if len(mapping) == 0 {
 		return requestedModel

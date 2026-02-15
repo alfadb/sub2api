@@ -5245,8 +5245,6 @@ func (s *GatewayService) validateUpstreamBaseURL(raw string) (string, error) {
 	return normalized, nil
 }
 
-// GetAvailableModels returns the list of models available for a group
-// It aggregates model_mapping keys from all schedulable accounts in the group
 func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64, platform string) []string {
 	var accounts []Account
 	var err error
@@ -5274,20 +5272,29 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 
 	// Collect unique models from all accounts
 	modelSet := make(map[string]struct{})
-	hasAnyMapping := false
+	hasAnyModels := false
 
 	for _, acc := range accounts {
+		if isGitHubCopilotAccount(&acc) {
+			if ids := acc.GetAvailableModels(); len(ids) > 0 {
+				hasAnyModels = true
+				for _, id := range ids {
+					modelSet[id] = struct{}{}
+				}
+				continue
+			}
+		}
+
 		mapping := acc.GetModelMapping()
 		if len(mapping) > 0 {
-			hasAnyMapping = true
+			hasAnyModels = true
 			for model := range mapping {
 				modelSet[model] = struct{}{}
 			}
 		}
 	}
 
-	// If no account has model_mapping, return nil (use default)
-	if !hasAnyMapping {
+	if !hasAnyModels {
 		return nil
 	}
 

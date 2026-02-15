@@ -2,6 +2,8 @@ package handler
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +14,8 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/domain"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -22,7 +26,9 @@ import (
 
 // OpenAIGatewayHandler handles OpenAI API gateway requests
 type OpenAIGatewayHandler struct {
-	gatewayService          *service.OpenAIGatewayService
+	openaiGatewayService    *service.OpenAIGatewayService
+	claudeGatewayService    *service.GatewayService
+	geminiCompatService     *service.GeminiMessagesCompatService
 	billingCacheService     *service.BillingCacheService
 	apiKeyService           *service.APIKeyService
 	errorPassthroughService *service.ErrorPassthroughService
@@ -32,7 +38,9 @@ type OpenAIGatewayHandler struct {
 
 // NewOpenAIGatewayHandler creates a new OpenAIGatewayHandler
 func NewOpenAIGatewayHandler(
-	gatewayService *service.OpenAIGatewayService,
+	openaiGatewayService *service.OpenAIGatewayService,
+	claudeGatewayService *service.GatewayService,
+	geminiCompatService *service.GeminiMessagesCompatService,
 	concurrencyService *service.ConcurrencyService,
 	billingCacheService *service.BillingCacheService,
 	apiKeyService *service.APIKeyService,
@@ -48,7 +56,9 @@ func NewOpenAIGatewayHandler(
 		}
 	}
 	return &OpenAIGatewayHandler{
-		gatewayService:          gatewayService,
+		openaiGatewayService:    openaiGatewayService,
+		claudeGatewayService:    claudeGatewayService,
+		geminiCompatService:     geminiCompatService,
 		billingCacheService:     billingCacheService,
 		apiKeyService:           apiKeyService,
 		errorPassthroughService: errorPassthroughService,
@@ -106,6 +116,22 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	if reqModel == "" {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "model is required")
 		return
+	}
+
+	requestedModelForClient := strings.TrimSpace(reqModel)
+	if ns := service.ParseModelNamespace(reqModel); ns.HasNamespace {
+		reqModel = ns.Model
+		reqBody["model"] = reqModel
+		body, err = json.Marshal(reqBody)
+		if err != nil {
+			h.errorResponse(c, http.StatusInternalServerError, "api_error", "Failed to process request")
+			return
+		}
+		if ns.Platform != "" && !middleware2.HasForcePlatform(c) {
+			ctx := context.WithValue(c.Request.Context(), ctxkey.ForcePlatform, ns.Platform)
+			c.Request = c.Request.WithContext(ctx)
+			c.Set(string(middleware2.ContextKeyForcePlatform), ns.Platform)
+		}
 	}
 
 	userAgent := c.GetHeader("User-Agent")
@@ -204,7 +230,27 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	}
 
 	// Generate session hash (header first; fallback to prompt_cache_key)
-	sessionHash := h.gatewayService.GenerateSessionHash(c, reqBody)
+	sessionHash := h.openaiGatewayService.GenerateSessionHash(c, reqBody)
+
+	targetPlatform := ""
+	if fp, ok := middleware2.GetForcePlatformFromContext(c); ok {
+		targetPlatform = strings.TrimSpace(fp)
+	}
+	if targetPlatform == "" && apiKey.Group != nil {
+		targetPlatform = strings.TrimSpace(apiKey.Group.Platform)
+	}
+	if strings.EqualFold(targetPlatform, "claude") {
+		targetPlatform = service.PlatformAnthropic
+	}
+	if targetPlatform == service.PlatformAnthropic || targetPlatform == service.PlatformGemini {
+		h.handleCrossPlatformResponses(c, apiKey, subscription, reqBody, body, reqModel, requestedModelForClient, reqStream, sessionHash, &streamStarted)
+		return
+	}
+
+	openaiPlatform := service.PlatformOpenAI
+	if targetPlatform == service.PlatformCopilot || targetPlatform == service.PlatformAggregator {
+		openaiPlatform = targetPlatform
+	}
 
 	maxAccountSwitches := h.maxAccountSwitches
 	switchCount := 0
@@ -214,14 +260,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	for {
 		// Select account supporting the requested model
 		log.Printf("[OpenAI Handler] Selecting account: groupID=%v model=%s", apiKey.GroupID, reqModel)
-		platform := service.PlatformOpenAI
-		if apiKey.Group != nil {
-			platform = strings.TrimSpace(apiKey.Group.Platform)
-		}
-		if platform != service.PlatformCopilot && platform != service.PlatformAggregator {
-			platform = service.PlatformOpenAI
-		}
-		selection, err := h.gatewayService.SelectAccountWithLoadAwarenessForPlatform(c.Request.Context(), apiKey.GroupID, platform, sessionHash, reqModel, failedAccountIDs)
+		selection, err := h.openaiGatewayService.SelectAccountWithLoadAwarenessForPlatform(c.Request.Context(), apiKey.GroupID, openaiPlatform, sessionHash, reqModel, failedAccountIDs)
 		if err != nil {
 			log.Printf("[OpenAI Handler] SelectAccount failed: %v", err)
 			if len(failedAccountIDs) == 0 {
@@ -281,7 +320,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				h.concurrencyHelper.DecrementAccountWaitCount(c.Request.Context(), account.ID)
 				accountWaitCounted = false
 			}
-			if err := h.gatewayService.BindStickySessionForPlatform(c.Request.Context(), apiKey.GroupID, platform, sessionHash, account.ID); err != nil {
+			if err := h.openaiGatewayService.BindStickySessionForPlatform(c.Request.Context(), apiKey.GroupID, openaiPlatform, sessionHash, account.ID); err != nil {
 				log.Printf("Bind sticky session failed: %v", err)
 			}
 		}
@@ -289,7 +328,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		accountReleaseFunc = wrapReleaseOnDone(c.Request.Context(), accountReleaseFunc)
 
 		// Forward request
-		result, err := h.gatewayService.Forward(c.Request.Context(), c, account, body)
+		result, err := h.openaiGatewayService.Forward(c.Request.Context(), c, account, body)
 		if accountReleaseFunc != nil {
 			accountReleaseFunc()
 		}
@@ -319,7 +358,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		go func(result *service.OpenAIForwardResult, usedAccount *service.Account, ua, ip string) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
+			if err := h.openaiGatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 				Result:        result,
 				APIKey:        apiKey,
 				User:          apiKey.User,
@@ -334,6 +373,360 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		}(result, account, userAgent, clientIP)
 		return
 	}
+}
+
+func (h *OpenAIGatewayHandler) handleCrossPlatformResponses(
+	c *gin.Context,
+	apiKey *service.APIKey,
+	subscription *service.UserSubscription,
+	reqBody map[string]any,
+	body []byte,
+	reqModel string,
+	requestedModelForClient string,
+	reqStream bool,
+	sessionHash string,
+	streamStarted *bool,
+) {
+	if h.claudeGatewayService == nil {
+		h.handleStreamingAwareError(c, http.StatusInternalServerError, "api_error", "Gateway service not configured", derefBool(streamStarted))
+		return
+	}
+	if apiKey == nil {
+		h.handleStreamingAwareError(c, http.StatusUnauthorized, "authentication_error", "Invalid API key", derefBool(streamStarted))
+		return
+	}
+
+	platform := ""
+	if fp, ok := middleware2.GetForcePlatformFromContext(c); ok {
+		platform = strings.TrimSpace(fp)
+	}
+	if platform == "" && apiKey.Group != nil {
+		platform = strings.TrimSpace(apiKey.Group.Platform)
+	}
+	if strings.EqualFold(platform, "claude") {
+		platform = service.PlatformAnthropic
+	}
+
+	sessionKey := sessionHash
+	if platform == service.PlatformGemini && strings.TrimSpace(sessionHash) != "" {
+		sessionKey = "gemini:" + sessionHash
+	}
+
+	maxAccountSwitches := h.maxAccountSwitches
+	switchCount := 0
+	failedAccountIDs := make(map[int64]struct{})
+	var lastFailoverErr *service.UpstreamFailoverError
+
+	for {
+		selection, err := h.claudeGatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), apiKey.GroupID, sessionKey, reqModel, failedAccountIDs, "")
+		if err != nil {
+			if len(failedAccountIDs) == 0 {
+				h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts: "+err.Error(), derefBool(streamStarted))
+				return
+			}
+			if lastFailoverErr != nil {
+				h.handleFailoverExhausted(c, lastFailoverErr, derefBool(streamStarted))
+			} else {
+				h.handleFailoverExhaustedSimple(c, 502, derefBool(streamStarted))
+			}
+			return
+		}
+		account := selection.Account
+		setOpsSelectedAccount(c, account.ID)
+
+		accountReleaseFunc := selection.ReleaseFunc
+		if !selection.Acquired {
+			if selection.WaitPlan == nil {
+				h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts", derefBool(streamStarted))
+				return
+			}
+			accountWaitCounted := false
+			canWait, err := h.concurrencyHelper.IncrementAccountWaitCount(c.Request.Context(), account.ID, selection.WaitPlan.MaxWaiting)
+			if err != nil {
+				log.Printf("Increment account wait count failed: %v", err)
+			} else if !canWait {
+				log.Printf("Account wait queue full: account=%d", account.ID)
+				h.handleStreamingAwareError(c, http.StatusTooManyRequests, "rate_limit_error", "Too many pending requests, please retry later", derefBool(streamStarted))
+				return
+			}
+			if err == nil && canWait {
+				accountWaitCounted = true
+			}
+			defer func() {
+				if accountWaitCounted {
+					h.concurrencyHelper.DecrementAccountWaitCount(c.Request.Context(), account.ID)
+				}
+			}()
+
+			accountReleaseFunc, err = h.concurrencyHelper.AcquireAccountSlotWithWaitTimeout(
+				c,
+				account.ID,
+				selection.WaitPlan.MaxConcurrency,
+				selection.WaitPlan.Timeout,
+				reqStream,
+				streamStarted,
+			)
+			if err != nil {
+				log.Printf("Account concurrency acquire failed: %v", err)
+				h.handleConcurrencyError(c, err, "account", derefBool(streamStarted))
+				return
+			}
+			if accountWaitCounted {
+				h.concurrencyHelper.DecrementAccountWaitCount(c.Request.Context(), account.ID)
+				accountWaitCounted = false
+			}
+			if err := h.claudeGatewayService.BindStickySession(c.Request.Context(), apiKey.GroupID, sessionKey, account.ID); err != nil {
+				log.Printf("Bind sticky session failed: %v", err)
+			}
+		}
+		accountReleaseFunc = wrapReleaseOnDone(c.Request.Context(), accountReleaseFunc)
+
+		result, err := h.forwardCrossPlatformResponses(c.Request.Context(), c, account, reqBody, body, requestedModelForClient, reqStream, streamStarted)
+		if accountReleaseFunc != nil {
+			accountReleaseFunc()
+		}
+		if err != nil {
+			var failoverErr *service.UpstreamFailoverError
+			if errors.As(err, &failoverErr) {
+				failedAccountIDs[account.ID] = struct{}{}
+				lastFailoverErr = failoverErr
+				if switchCount >= maxAccountSwitches {
+					h.handleFailoverExhausted(c, failoverErr, derefBool(streamStarted))
+					return
+				}
+				switchCount++
+				continue
+			}
+			log.Printf("Account %d: Forward request failed: %v", account.ID, err)
+			return
+		}
+
+		ua := c.GetHeader("User-Agent")
+		clientIP := ip.GetClientIP(c)
+		go func(result *service.ForwardResult, usedAccount *service.Account, ua, ipAddr string) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := h.claudeGatewayService.RecordUsage(ctx, &service.RecordUsageInput{
+				Result:        result,
+				APIKey:        apiKey,
+				User:          apiKey.User,
+				Account:       usedAccount,
+				Subscription:  subscription,
+				UserAgent:     ua,
+				IPAddress:     ipAddr,
+				APIKeyService: h.apiKeyService,
+			}); err != nil {
+				log.Printf("Record usage failed: %v", err)
+			}
+		}(result, account, ua, clientIP)
+		return
+	}
+}
+
+func (h *OpenAIGatewayHandler) forwardCrossPlatformResponses(
+	ctx context.Context,
+	c *gin.Context,
+	account *service.Account,
+	openaiReq map[string]any,
+	openaiBody []byte,
+	requestedModelForClient string,
+	reqStream bool,
+	streamStarted *bool,
+) (*service.ForwardResult, error) {
+	claudeReq, convErr := service.ConvertOpenAIResponsesRequestToClaudeMessages(openaiReq)
+	if convErr != nil {
+		h.writeOpenAIResponsesError(c, reqStream, streamStarted, "invalid_request_error", convErr.Error())
+		return nil, convErr
+	}
+	claudeReq["stream"] = false
+	claudeBody, err := json.Marshal(claudeReq)
+	if err != nil {
+		h.writeOpenAIResponsesError(c, reqStream, streamStarted, "api_error", "Failed to process request")
+		return nil, err
+	}
+	if c != nil {
+		c.Set(service.OpsUpstreamRequestBodyKey, string(openaiBody))
+	}
+
+	origWriter := c.Writer
+	cw := newCaptureWriter(origWriter)
+	c.Writer = cw
+	defer func() { c.Writer = origWriter }()
+
+	var result *service.ForwardResult
+	if account.Platform == service.PlatformGemini {
+		if h.geminiCompatService == nil {
+			h.writeOpenAIResponsesError(c, reqStream, streamStarted, "api_error", "Gemini compat service not configured")
+			return nil, errors.New("gemini compat service not configured")
+		}
+		result, err = h.geminiCompatService.Forward(ctx, c, account, claudeBody)
+	} else {
+		parsed, perr := service.ParseGatewayRequest(claudeBody, domain.PlatformAnthropic)
+		if perr != nil {
+			h.writeOpenAIResponsesError(c, reqStream, streamStarted, "invalid_request_error", "Failed to parse request")
+			return nil, perr
+		}
+		result, err = h.claudeGatewayService.Forward(ctx, c, account, parsed)
+	}
+
+	c.Writer = origWriter
+
+	if err != nil {
+		var failoverErr *service.UpstreamFailoverError
+		if errors.As(err, &failoverErr) {
+			return nil, failoverErr
+		}
+		status := cw.Status()
+		errType := "upstream_error"
+		if status == http.StatusBadRequest {
+			errType = "invalid_request_error"
+		}
+		msg := extractClaudeErrorMessage(cw.buf.Bytes())
+		if strings.TrimSpace(msg) == "" {
+			msg = "Upstream request failed"
+		}
+		h.writeOpenAIResponsesError(c, reqStream, streamStarted, errType, msg)
+		return nil, err
+	}
+
+	var claudeResp map[string]any
+	if err := json.Unmarshal(cw.buf.Bytes(), &claudeResp); err != nil {
+		h.writeOpenAIResponsesError(c, reqStream, streamStarted, "upstream_error", "Failed to parse upstream response")
+		return nil, err
+	}
+
+	if strings.TrimSpace(requestedModelForClient) == "" {
+		requestedModelForClient, _ = openaiReq["model"].(string)
+	}
+
+	openaiResp, err := service.ConvertClaudeMessageToOpenAIResponsesResponse(claudeResp, &result.Usage, requestedModelForClient, "")
+	if err != nil {
+		h.writeOpenAIResponsesError(c, reqStream, streamStarted, "upstream_error", "Failed to convert upstream response")
+		return nil, err
+	}
+
+	if rid := strings.TrimSpace(cw.header.Get("x-request-id")); rid != "" {
+		c.Header("x-request-id", rid)
+	}
+
+	if !reqStream {
+		c.JSON(http.StatusOK, openaiResp)
+		return result, nil
+	}
+
+	if streamStarted != nil {
+		*streamStarted = true
+	}
+	writeOpenAIResponsesSSE(c, openaiResp)
+	return result, nil
+}
+
+func extractClaudeErrorMessage(body []byte) string {
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return ""
+	}
+	if errObj, ok := parsed["error"].(map[string]any); ok {
+		if msg, ok := errObj["message"].(string); ok {
+			return strings.TrimSpace(msg)
+		}
+	}
+	return ""
+}
+
+func writeOpenAIResponsesSSE(c *gin.Context, resp map[string]any) {
+	if c == nil {
+		return
+	}
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+
+	w := c.Writer
+	flusher, _ := w.(http.Flusher)
+	flush := func() {
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+
+	responseID, _ := resp["id"].(string)
+	if strings.TrimSpace(responseID) == "" {
+		responseID = "resp_" + randomHex(12)
+	}
+
+	writeEvent := func(eventType string, payload map[string]any) {
+		b, err := json.Marshal(payload)
+		if err != nil {
+			return
+		}
+		_, _ = fmt.Fprintf(w, "event: %s\n", eventType)
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", b)
+		flush()
+	}
+
+	writeEvent("response.created", map[string]any{"type": "response.created", "response": map[string]any{"id": responseID}})
+
+	if output, ok := resp["output"].([]any); ok {
+		for _, item := range output {
+			writeEvent("response.output_item.done", map[string]any{"type": "response.output_item.done", "item": item})
+		}
+	}
+
+	completed := map[string]any{"id": responseID}
+	if usage := resp["usage"]; usage != nil {
+		completed["usage"] = usage
+	}
+	writeEvent("response.completed", map[string]any{"type": "response.completed", "response": completed})
+}
+
+func (h *OpenAIGatewayHandler) writeOpenAIResponsesError(c *gin.Context, stream bool, streamStarted *bool, errType string, message string) {
+	if stream {
+		if streamStarted != nil {
+			*streamStarted = true
+		}
+		c.Header("Content-Type", "text/event-stream")
+		c.Header("Cache-Control", "no-cache")
+		c.Header("Connection", "keep-alive")
+		c.Header("X-Accel-Buffering", "no")
+		payload := map[string]any{
+			"type": "response.failed",
+			"response": map[string]any{
+				"id": "resp_" + randomHex(12),
+				"error": map[string]any{
+					"code":    errType,
+					"message": message,
+				},
+			},
+		}
+		b, _ := json.Marshal(payload)
+		_, _ = fmt.Fprintf(c.Writer, "event: response.failed\n")
+		_, _ = fmt.Fprintf(c.Writer, "data: %s\n\n", b)
+		if flusher, ok := c.Writer.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		return
+	}
+	h.errorResponse(c, http.StatusBadGateway, errType, message)
+}
+
+func derefBool(v *bool) bool {
+	if v == nil {
+		return false
+	}
+	return *v
+}
+
+func randomHex(nBytes int) string {
+	if nBytes <= 0 {
+		return ""
+	}
+	b := make([]byte, nBytes)
+	if _, err := rand.Read(b); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(b)
 }
 
 // handleConcurrencyError handles concurrency-related errors with proper 429 response

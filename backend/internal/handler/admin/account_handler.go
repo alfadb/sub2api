@@ -564,8 +564,33 @@ func (h *AccountHandler) PollGitHubDeviceAuth(c *gin.Context) {
 	}
 	newCredentials["github_token"] = strings.TrimSpace(pollResult.AccessToken)
 
+	newExtra := make(map[string]any)
+	for k, v := range account.Extra {
+		newExtra[k] = v
+	}
+	if h.githubCopilotToken != nil {
+		acc := *account
+		acc.Credentials = newCredentials
+		acc.Extra = newExtra
+		if models, err := h.githubCopilotToken.ListModels(c.Request.Context(), &acc); err == nil && len(models) > 0 {
+			ids := make([]string, 0, len(models))
+			for _, m := range models {
+				if v := strings.TrimSpace(m.ID); v != "" {
+					ids = append(ids, v)
+				}
+			}
+			if len(ids) > 0 {
+				now := time.Now().Format(time.RFC3339)
+				newExtra[service.AccountExtraKeyAvailableModels] = ids
+				newExtra[service.AccountExtraKeyAvailableModelsUpdatedAt] = now
+				newExtra[service.AccountExtraKeyAvailableModelsSource] = "github_copilot"
+			}
+		}
+	}
+
 	updated, err := h.adminService.UpdateAccount(c.Request.Context(), accountID, &service.UpdateAccountInput{
 		Credentials: newCredentials,
+		Extra:       newExtra,
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -1360,28 +1385,79 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 		return
 	}
 
+	platformPrefix := strings.TrimSpace(account.Platform)
+	if service.IsGitHubCopilotAccount(account) {
+		platformPrefix = service.PlatformCopilot
+	}
+	prefix := strings.TrimSpace(platformPrefix)
+	if prefix != "" {
+		prefix = prefix + "/"
+	}
+
 	if account.Platform == service.PlatformOpenAI || account.Platform == service.PlatformCopilot || account.Platform == service.PlatformAggregator || service.IsGitHubCopilotAccount(account) {
 		// For OAuth accounts: return default OpenAI models
 		if account.IsOAuth() {
-			response.Success(c, openai.DefaultModels)
+			out := make([]openai.Model, 0, len(openai.DefaultModels))
+			for _, m := range openai.DefaultModels {
+				mm := m
+				mm.ID = prefix + mm.ID
+				out = append(out, mm)
+			}
+			response.Success(c, out)
 			return
 		}
 
 		if account.Platform == service.PlatformCopilot || service.IsGitHubCopilotAccount(account) {
+			if ids := account.GetAvailableModels(); len(ids) > 0 {
+				defaults := make(map[string]openai.Model, len(openai.DefaultModels))
+				for _, dm := range openai.DefaultModels {
+					defaults[dm.ID] = dm
+				}
+				models := make([]openai.Model, 0, len(ids))
+				for _, id := range ids {
+					if dm, ok := defaults[id]; ok {
+						m := dm
+						m.ID = prefix + m.ID
+						models = append(models, m)
+						continue
+					}
+					models = append(models, openai.Model{ID: prefix + id, Object: "model", Type: "model", DisplayName: id})
+				}
+				response.Success(c, models)
+				return
+			}
 			if h.githubCopilotToken != nil {
 				if models, err := h.githubCopilotToken.ListModels(c.Request.Context(), account); err == nil && len(models) > 0 {
-					response.Success(c, models)
+					out := make([]openai.Model, 0, len(models))
+					for _, m := range models {
+						mm := m
+						mm.ID = prefix + mm.ID
+						out = append(out, mm)
+					}
+					response.Success(c, out)
 					return
 				}
 			}
-			response.Success(c, openai.DefaultModels)
+			out := make([]openai.Model, 0, len(openai.DefaultModels))
+			for _, m := range openai.DefaultModels {
+				mm := m
+				mm.ID = prefix + mm.ID
+				out = append(out, mm)
+			}
+			response.Success(c, out)
 			return
 		}
 
 		// For API Key accounts: check model_mapping
 		mapping := account.GetModelMapping()
 		if len(mapping) == 0 {
-			response.Success(c, openai.DefaultModels)
+			out := make([]openai.Model, 0, len(openai.DefaultModels))
+			for _, m := range openai.DefaultModels {
+				mm := m
+				mm.ID = prefix + mm.ID
+				out = append(out, mm)
+			}
+			response.Success(c, out)
 			return
 		}
 
@@ -1391,14 +1467,16 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 			var found bool
 			for _, dm := range openai.DefaultModels {
 				if dm.ID == requestedModel {
-					models = append(models, dm)
+					m := dm
+					m.ID = prefix + m.ID
+					models = append(models, m)
 					found = true
 					break
 				}
 			}
 			if !found {
 				models = append(models, openai.Model{
-					ID:          requestedModel,
+					ID:          prefix + requestedModel,
 					Object:      "model",
 					Type:        "model",
 					DisplayName: requestedModel,
@@ -1413,14 +1491,26 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 	if account.IsGemini() {
 		// For OAuth accounts: return default Gemini models
 		if account.IsOAuth() {
-			response.Success(c, geminicli.DefaultModels)
+			out := make([]geminicli.Model, 0, len(geminicli.DefaultModels))
+			for _, m := range geminicli.DefaultModels {
+				mm := m
+				mm.ID = prefix + mm.ID
+				out = append(out, mm)
+			}
+			response.Success(c, out)
 			return
 		}
 
 		// For API Key accounts: return models based on model_mapping
 		mapping := account.GetModelMapping()
 		if len(mapping) == 0 {
-			response.Success(c, geminicli.DefaultModels)
+			out := make([]geminicli.Model, 0, len(geminicli.DefaultModels))
+			for _, m := range geminicli.DefaultModels {
+				mm := m
+				mm.ID = prefix + mm.ID
+				out = append(out, mm)
+			}
+			response.Success(c, out)
 			return
 		}
 
@@ -1429,14 +1519,16 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 			var found bool
 			for _, dm := range geminicli.DefaultModels {
 				if dm.ID == requestedModel {
-					models = append(models, dm)
+					m := dm
+					m.ID = prefix + m.ID
+					models = append(models, m)
 					found = true
 					break
 				}
 			}
 			if !found {
 				models = append(models, geminicli.Model{
-					ID:          requestedModel,
+					ID:          prefix + requestedModel,
 					Type:        "model",
 					DisplayName: requestedModel,
 					CreatedAt:   "",
@@ -1461,7 +1553,7 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 		// 添加 Claude 模型
 		for _, m := range claude.DefaultModels {
 			models = append(models, UnifiedModel{
-				ID:          m.ID,
+				ID:          prefix + m.ID,
 				Type:        m.Type,
 				DisplayName: m.DisplayName,
 			})
@@ -1469,8 +1561,8 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 
 		// 添加 Gemini 3 系列模型用于测试
 		geminiTestModels := []UnifiedModel{
-			{ID: "gemini-3-flash", Type: "model", DisplayName: "Gemini 3 Flash"},
-			{ID: "gemini-3-pro-preview", Type: "model", DisplayName: "Gemini 3 Pro Preview"},
+			{ID: prefix + "gemini-3-flash", Type: "model", DisplayName: "Gemini 3 Flash"},
+			{ID: prefix + "gemini-3-pro-preview", Type: "model", DisplayName: "Gemini 3 Pro Preview"},
 		}
 		models = append(models, geminiTestModels...)
 
@@ -1481,7 +1573,13 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 	// Handle Claude/Anthropic accounts
 	// For OAuth and Setup-Token accounts: return default models
 	if account.IsOAuth() {
-		response.Success(c, claude.DefaultModels)
+		out := make([]claude.Model, 0, len(claude.DefaultModels))
+		for _, m := range claude.DefaultModels {
+			mm := m
+			mm.ID = prefix + mm.ID
+			out = append(out, mm)
+		}
+		response.Success(c, out)
 		return
 	}
 
@@ -1489,7 +1587,13 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 	mapping := account.GetModelMapping()
 	if len(mapping) == 0 {
 		// No mapping configured, return default models
-		response.Success(c, claude.DefaultModels)
+		out := make([]claude.Model, 0, len(claude.DefaultModels))
+		for _, m := range claude.DefaultModels {
+			mm := m
+			mm.ID = prefix + mm.ID
+			out = append(out, mm)
+		}
+		response.Success(c, out)
 		return
 	}
 
@@ -1500,7 +1604,9 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 		var found bool
 		for _, dm := range claude.DefaultModels {
 			if dm.ID == requestedModel {
-				models = append(models, dm)
+				m := dm
+				m.ID = prefix + m.ID
+				models = append(models, m)
 				found = true
 				break
 			}
@@ -1508,7 +1614,7 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 		// If not found in defaults, create a basic entry
 		if !found {
 			models = append(models, claude.Model{
-				ID:          requestedModel,
+				ID:          prefix + requestedModel,
 				Type:        "model",
 				DisplayName: requestedModel,
 				CreatedAt:   "",
@@ -1517,6 +1623,64 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 	}
 
 	response.Success(c, models)
+}
+
+func (h *AccountHandler) RefreshAvailableModels(c *gin.Context) {
+	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid account ID")
+		return
+	}
+	if h.githubCopilotToken == nil {
+		response.InternalError(c, "GitHub Copilot token provider not configured")
+		return
+	}
+
+	account, err := h.adminService.GetAccount(c.Request.Context(), accountID)
+	if err != nil {
+		response.NotFound(c, "Account not found")
+		return
+	}
+	if account == nil {
+		response.BadRequest(c, "Account not found")
+		return
+	}
+	if !(account.Platform == service.PlatformCopilot || service.IsGitHubCopilotAccount(account)) {
+		response.BadRequest(c, "Only GitHub Copilot accounts support model refresh")
+		return
+	}
+
+	models, err := h.githubCopilotToken.ListModels(c.Request.Context(), account)
+	if err != nil {
+		response.InternalError(c, "Refresh models failed: "+err.Error())
+		return
+	}
+	ids := make([]string, 0, len(models))
+	for _, m := range models {
+		if v := strings.TrimSpace(m.ID); v != "" {
+			ids = append(ids, v)
+		}
+	}
+	if len(ids) > 0 {
+		now := time.Now().Format(time.RFC3339)
+		newExtra := make(map[string]any)
+		for k, v := range account.Extra {
+			newExtra[k] = v
+		}
+		newExtra[service.AccountExtraKeyAvailableModels] = ids
+		newExtra[service.AccountExtraKeyAvailableModelsUpdatedAt] = now
+		newExtra[service.AccountExtraKeyAvailableModelsSource] = "github_copilot"
+		_, _ = h.adminService.UpdateAccount(c.Request.Context(), accountID, &service.UpdateAccountInput{Extra: newExtra})
+	}
+
+	prefix := service.PlatformCopilot + "/"
+	out := make([]openai.Model, 0, len(models))
+	for _, m := range models {
+		mm := m
+		mm.ID = prefix + mm.ID
+		out = append(out, mm)
+	}
+	response.Success(c, out)
 }
 
 // RefreshTier handles refreshing Google One tier for a single account

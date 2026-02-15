@@ -873,15 +873,38 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 	// Handle max_output_tokens based on platform and account type
 	if !isCodexCLI {
-		if maxOutputTokens, hasMaxOutputTokens := reqBody["max_output_tokens"]; hasMaxOutputTokens {
+		if account.Type == AccountTypeAPIKey {
 			switch account.Platform {
-			case PlatformOpenAI:
-				// For OpenAI API Key, remove max_output_tokens (not supported)
-				// For OpenAI OAuth (Responses API), keep it (supported)
-				if account.Type == AccountTypeAPIKey && !isGitHubCopilot {
-					delete(reqBody, "max_output_tokens")
+			case PlatformOpenAI, PlatformCopilot, PlatformAggregator:
+				if _, has := reqBody["max_output_tokens"]; has {
+					if _, ok := reqBody["max_tokens"]; ok {
+						delete(reqBody, "max_tokens")
+						bodyModified = true
+					}
+					if _, ok := reqBody["max_completion_tokens"]; ok {
+						delete(reqBody, "max_completion_tokens")
+						bodyModified = true
+					}
+				} else if v, ok := reqBody["max_completion_tokens"]; ok {
+					reqBody["max_output_tokens"] = v
+					delete(reqBody, "max_completion_tokens")
+					if _, ok := reqBody["max_tokens"]; ok {
+						delete(reqBody, "max_tokens")
+					}
+					bodyModified = true
+				} else if v, ok := reqBody["max_tokens"]; ok {
+					reqBody["max_output_tokens"] = v
+					delete(reqBody, "max_tokens")
+					if _, ok := reqBody["max_completion_tokens"]; ok {
+						delete(reqBody, "max_completion_tokens")
+					}
 					bodyModified = true
 				}
+			}
+		}
+
+		if maxOutputTokens, hasMaxOutputTokens := reqBody["max_output_tokens"]; hasMaxOutputTokens {
+			switch account.Platform {
 			case PlatformAnthropic:
 				// For Anthropic (Claude), convert to max_tokens
 				delete(reqBody, "max_output_tokens")
@@ -894,9 +917,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				delete(reqBody, "max_output_tokens")
 				bodyModified = true
 			default:
-				// For unknown platforms, remove to be safe
-				delete(reqBody, "max_output_tokens")
-				bodyModified = true
+				if account.Platform != PlatformOpenAI && account.Platform != PlatformCopilot && account.Platform != PlatformAggregator {
+					// For unknown platforms, remove to be safe
+					delete(reqBody, "max_output_tokens")
+					bodyModified = true
+				}
 			}
 		}
 
@@ -1095,6 +1120,9 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 		if baseURL == "" && account.Platform == PlatformCopilot {
 			baseURL = "https://api.githubcopilot.com"
 		}
+		if baseURL == "" && account.Platform == PlatformAggregator {
+			return nil, errors.New("base_url is required for aggregator accounts")
+		}
 		if baseURL == "" {
 			targetURL = openaiPlatformAPIURL
 		} else {
@@ -1108,6 +1136,10 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 		targetURL = openaiPlatformAPIURL
 	}
 
+	return s.buildUpstreamRequestWithTargetURL(ctx, c, account, body, token, isStream, promptCacheKey, isCodexCLI, isGitHubCopilot, copilotVision, copilotInitiator, targetURL)
+}
+
+func (s *OpenAIGatewayService) buildUpstreamRequestWithTargetURL(ctx context.Context, c *gin.Context, account *Account, body []byte, token string, isStream bool, promptCacheKey string, isCodexCLI bool, isGitHubCopilot bool, copilotVision bool, copilotInitiator string, targetURL string) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, "POST", targetURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, err

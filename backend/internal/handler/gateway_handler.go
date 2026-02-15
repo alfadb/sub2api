@@ -30,6 +30,7 @@ import (
 type GatewayHandler struct {
 	gatewayService            *service.GatewayService
 	geminiCompatService       *service.GeminiMessagesCompatService
+	openaiCompatService       *service.OpenAIMessagesCompatService
 	antigravityGatewayService *service.AntigravityGatewayService
 	userService               *service.UserService
 	billingCacheService       *service.BillingCacheService
@@ -45,6 +46,7 @@ type GatewayHandler struct {
 func NewGatewayHandler(
 	gatewayService *service.GatewayService,
 	geminiCompatService *service.GeminiMessagesCompatService,
+	openaiCompatService *service.OpenAIMessagesCompatService,
 	antigravityGatewayService *service.AntigravityGatewayService,
 	userService *service.UserService,
 	concurrencyService *service.ConcurrencyService,
@@ -69,6 +71,7 @@ func NewGatewayHandler(
 	return &GatewayHandler{
 		gatewayService:            gatewayService,
 		geminiCompatService:       geminiCompatService,
+		openaiCompatService:       openaiCompatService,
 		antigravityGatewayService: antigravityGatewayService,
 		userService:               userService,
 		billingCacheService:       billingCacheService,
@@ -143,6 +146,18 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	if reqModel == "" {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "model is required")
 		return
+	}
+
+	if ns := service.ParseModelNamespace(reqModel); ns.HasNamespace {
+		reqModel = ns.Model
+		parsedReq.Model = reqModel
+		body = replaceModelFieldRaw(body, reqModel)
+		parsedReq.Body = body
+		if ns.Platform != "" && !middleware2.HasForcePlatform(c) {
+			ctx := context.WithValue(c.Request.Context(), ctxkey.ForcePlatform, ns.Platform)
+			c.Request = c.Request.WithContext(ctx)
+			c.Set(string(middleware2.ContextKeyForcePlatform), ns.Platform)
+		}
 	}
 
 	// Track if we've started streaming (for error handling)
@@ -554,6 +569,14 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			}
 			if account.Platform == service.PlatformAntigravity && account.Type != service.AccountTypeAPIKey {
 				result, err = h.antigravityGatewayService.Forward(requestCtx, c, account, body, hasBoundSession)
+			} else if account.Platform == service.PlatformCopilot {
+				if service.IsClaudeModelID(reqModel) {
+					result, err = h.gatewayService.Forward(requestCtx, c, account, parsedReq)
+				} else {
+					result, err = h.openaiCompatService.Forward(requestCtx, c, account, parsedReq)
+				}
+			} else if account.Platform == service.PlatformOpenAI || account.Platform == service.PlatformAggregator {
+				result, err = h.openaiCompatService.Forward(requestCtx, c, account, parsedReq)
 			} else {
 				result, err = h.gatewayService.Forward(requestCtx, c, account, parsedReq)
 			}
@@ -687,28 +710,46 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 	availableModels := h.gatewayService.GetAvailableModels(c.Request.Context(), groupID, "")
 
 	if len(availableModels) > 0 {
-		// Build model list from whitelist
+		if platform == service.PlatformOpenAI || platform == service.PlatformCopilot || platform == service.PlatformAggregator {
+			defaults := make(map[string]openai.Model, len(openai.DefaultModels))
+			for _, dm := range openai.DefaultModels {
+				defaults[dm.ID] = dm
+			}
+			models := make([]openai.Model, 0, len(availableModels))
+			for _, modelID := range availableModels {
+				nsID := namespaceModelID(platform, modelID)
+				if dm, ok := defaults[modelID]; ok {
+					m := dm
+					m.ID = nsID
+					models = append(models, m)
+					continue
+				}
+				models = append(models, openai.Model{ID: nsID, Object: "model", Type: "model", DisplayName: modelID})
+			}
+			c.JSON(http.StatusOK, gin.H{"object": "list", "data": models})
+			return
+		}
+
 		models := make([]claude.Model, 0, len(availableModels))
 		for _, modelID := range availableModels {
-			models = append(models, claude.Model{
-				ID:          modelID,
-				Type:        "model",
-				DisplayName: modelID,
-				CreatedAt:   "2024-01-01T00:00:00Z",
-			})
+			nsID := namespaceModelID(platform, modelID)
+			models = append(models, claude.Model{ID: nsID, Type: "model", DisplayName: modelID, CreatedAt: "2024-01-01T00:00:00Z"})
 		}
-		c.JSON(http.StatusOK, gin.H{
-			"object": "list",
-			"data":   models,
-		})
+		c.JSON(http.StatusOK, gin.H{"object": "list", "data": models})
 		return
 	}
 
 	if platform == service.PlatformCopilot {
 		if models, err := h.gatewayService.ListGitHubCopilotModels(c.Request.Context(), groupID); err == nil && len(models) > 0 {
+			out := make([]openai.Model, 0, len(models))
+			for _, m := range models {
+				mm := m
+				mm.ID = namespaceModelID(platform, mm.ID)
+				out = append(out, mm)
+			}
 			c.JSON(http.StatusOK, gin.H{
 				"object": "list",
-				"data":   models,
+				"data":   out,
 			})
 			return
 		}
@@ -716,17 +757,51 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 
 	// Fallback to default models
 	if platform == service.PlatformOpenAI || platform == service.PlatformCopilot || platform == service.PlatformAggregator {
+		out := make([]openai.Model, 0, len(openai.DefaultModels))
+		for _, m := range openai.DefaultModels {
+			mm := m
+			mm.ID = namespaceModelID(platform, mm.ID)
+			out = append(out, mm)
+		}
 		c.JSON(http.StatusOK, gin.H{
 			"object": "list",
-			"data":   openai.DefaultModels,
+			"data":   out,
 		})
 		return
 	}
 
+	out := make([]claude.Model, 0, len(claude.DefaultModels))
+	for _, m := range claude.DefaultModels {
+		mm := m
+		mm.ID = namespaceModelID(platform, mm.ID)
+		out = append(out, mm)
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"object": "list",
-		"data":   claude.DefaultModels,
+		"data":   out,
 	})
+}
+
+func namespaceModelID(platform string, modelID string) string {
+	modelID = strings.TrimSpace(modelID)
+	if modelID == "" {
+		return ""
+	}
+	if strings.Contains(modelID, "/") {
+		return modelID
+	}
+	if service.IsClaudeModelID(modelID) {
+		return service.PlatformAnthropic + "/" + modelID
+	}
+	if service.IsGeminiModelID(modelID) {
+		return service.PlatformGemini + "/" + modelID
+	}
+	platform = strings.TrimSpace(platform)
+	if platform == "" {
+		return modelID
+	}
+	return platform + "/" + modelID
 }
 
 // AntigravityModels 返回 Antigravity 支持的全部模型
@@ -747,6 +822,26 @@ func cloneAPIKeyWithGroup(apiKey *service.APIKey, group *service.Group) *service
 	cloned.GroupID = &groupID
 	cloned.Group = group
 	return &cloned
+}
+
+func replaceModelFieldRaw(body []byte, model string) []byte {
+	if len(body) == 0 {
+		return body
+	}
+	var req map[string]json.RawMessage
+	if err := json.Unmarshal(body, &req); err != nil {
+		return body
+	}
+	modelBytes, err := json.Marshal(model)
+	if err != nil {
+		return body
+	}
+	req["model"] = modelBytes
+	newBody, err := json.Marshal(req)
+	if err != nil {
+		return body
+	}
+	return newBody
 }
 
 // Usage handles getting account balance and usage statistics for CC Switch integration
@@ -1113,6 +1208,17 @@ func (h *GatewayHandler) CountTokens(c *gin.Context) {
 		return
 	}
 
+	if ns := service.ParseModelNamespace(parsedReq.Model); ns.HasNamespace {
+		parsedReq.Model = ns.Model
+		body = replaceModelFieldRaw(body, ns.Model)
+		parsedReq.Body = body
+		if ns.Platform != "" && !middleware2.HasForcePlatform(c) {
+			ctx := context.WithValue(c.Request.Context(), ctxkey.ForcePlatform, ns.Platform)
+			c.Request = c.Request.WithContext(ctx)
+			c.Set(string(middleware2.ContextKeyForcePlatform), ns.Platform)
+		}
+	}
+
 	setOpsRequestContext(c, parsedReq.Model, parsedReq.Stream, body)
 
 	// 获取订阅信息（可能为nil）
@@ -1143,6 +1249,14 @@ func (h *GatewayHandler) CountTokens(c *gin.Context) {
 	setOpsSelectedAccount(c, account.ID)
 
 	// 转发请求（不记录使用量）
+	if account.Platform == service.PlatformOpenAI || account.Platform == service.PlatformCopilot || account.Platform == service.PlatformAggregator {
+		if err := h.openaiCompatService.ForwardCountTokens(c.Request.Context(), c, account, parsedReq); err != nil {
+			log.Printf("Forward count_tokens request failed: %v", err)
+			// 错误响应已在 ForwardCountTokens 中处理
+			return
+		}
+		return
+	}
 	if err := h.gatewayService.ForwardCountTokens(c.Request.Context(), c, account, parsedReq); err != nil {
 		log.Printf("Forward count_tokens request failed: %v", err)
 		// 错误响应已在 ForwardCountTokens 中处理

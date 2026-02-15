@@ -30,16 +30,24 @@ func TestGeminiV1BetaHandler_PlatformRoutingInvariant(t *testing.T) {
 			expectedService: "AntigravityGatewayService.ForwardGemini",
 			description:     "Antigravity 账户通过 CRS 中转，支持 Gemini 协议",
 		},
+		{
+			name:            "非Gemini平台使用跨协议转发",
+			platform:        service.PlatformOpenAI,
+			expectedService: "GatewayHandler.forwardGeminiNativeCrossPlatform",
+			description:     "Gemini 原生协议可通过 namespace 调用其它平台模型",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// 模拟 GeminiV1BetaModels 中的路由决策 (lines 199-205 in gemini_v1beta_handler.go)
 			var routedService string
-			if tt.platform == service.PlatformAntigravity {
+			switch tt.platform {
+			case service.PlatformAntigravity:
 				routedService = "AntigravityGatewayService.ForwardGemini"
-			} else {
+			case service.PlatformGemini:
 				routedService = "GeminiMessagesCompatService.ForwardNative"
+			default:
+				routedService = "GatewayHandler.forwardGeminiNativeCrossPlatform"
 			}
 
 			require.Equal(t, tt.expectedService, routedService,

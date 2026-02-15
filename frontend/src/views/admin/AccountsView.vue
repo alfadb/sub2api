@@ -244,7 +244,7 @@
     <AccountTestModal :show="showTest" :account="testingAcc" @close="closeTestModal" />
     <AccountStatsModal :show="showStats" :account="statsAcc" @close="closeStatsModal" />
     <GitHubDeviceAuthModal :show="showDeviceAuth" :account="deviceAuthAcc" @close="closeDeviceAuthModal" @success="handleDeviceAuthSuccess" />
-    <AccountActionMenu :show="menu.show" :account="menu.acc" :position="menu.pos" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @reauth="handleReAuth" @device-auth="handleDeviceAuth" @refresh-token="handleRefresh" @reset-status="handleResetStatus" @clear-rate-limit="handleClearRateLimit" />
+    <AccountActionMenu :show="menu.show" :account="menu.acc" :position="menu.pos" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @reauth="handleReAuth" @device-auth="handleDeviceAuth" @refresh-token="handleRefresh" @refresh-models="handleRefreshModels" @reset-status="handleResetStatus" @clear-rate-limit="handleClearRateLimit" />
     <SyncFromCrsModal :show="showSync" @close="showSync = false" @synced="reload" />
     <ImportDataModal :show="showImportData" @close="showImportData = false" @imported="handleDataImported" />
     <BulkEditAccountModal :show="showBulkEdit" :account-ids="selIds" :proxies="proxies" :groups="groups" @close="showBulkEdit = false" @updated="handleBulkUpdated" />
@@ -536,7 +536,7 @@ const openMenu = (a: Account, e: MouseEvent) => {
   if (target) {
     const rect = target.getBoundingClientRect()
     const menuWidth = 200
-    const menuHeight = 240
+    const menuHeight = 280
     const padding = 8
     const viewportWidth = window.innerWidth
     const viewportHeight = window.innerHeight
@@ -753,6 +753,15 @@ const handleReAuth = (a: Account) => { reAuthAcc.value = a; showReAuth.value = t
 const handleDeviceAuth = (a: Account) => { deviceAuthAcc.value = a; showDeviceAuth.value = true }
 const handleDeviceAuthSuccess = () => { closeDeviceAuthModal(); reload() }
 const handleRefresh = async (a: Account) => { try { await adminAPI.accounts.refreshCredentials(a.id); load() } catch (error) { console.error('Failed to refresh credentials:', error) } }
+const handleRefreshModels = async (a: Account) => {
+  try {
+    await adminAPI.accounts.refreshAvailableModels(a.id)
+    appStore.showSuccess(t('admin.accounts.refreshModelsSuccess'))
+    load()
+  } catch (error: any) {
+    appStore.showError(error?.response?.data?.detail || t('admin.accounts.refreshModelsFailed'))
+  }
+}
 const handleResetStatus = async (a: Account) => { try { await adminAPI.accounts.clearError(a.id); appStore.showSuccess(t('common.success')); load() } catch (error) { console.error('Failed to reset status:', error) } }
 const handleClearRateLimit = async (a: Account) => { try { await adminAPI.accounts.clearRateLimit(a.id); appStore.showSuccess(t('common.success')); load() } catch (error) { console.error('Failed to clear rate limit:', error) } }
 const handleDelete = (a: Account) => { deletingAcc.value = a; showDeleteDialog.value = true }

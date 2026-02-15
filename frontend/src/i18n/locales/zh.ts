@@ -1354,6 +1354,9 @@ export default {
       description: '管理 AI 平台账号和 Cookie',
       createAccount: '添加账号',
       deviceAuthAction: '设备授权',
+      refreshModels: '刷新模型',
+      refreshModelsSuccess: '模型已刷新',
+      refreshModelsFailed: '刷新模型失败',
       deviceAuth: {
         title: 'GitHub 设备授权',
         step1: '复制授权码并打开链接',

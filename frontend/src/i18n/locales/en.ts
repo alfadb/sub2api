@@ -1266,6 +1266,9 @@ export default {
       description: 'Manage AI platform accounts and credentials',
       createAccount: 'Create Account',
       deviceAuthAction: 'Device Auth',
+      refreshModels: 'Refresh Models',
+      refreshModelsSuccess: 'Models refreshed',
+      refreshModelsFailed: 'Failed to refresh models',
       deviceAuth: {
         title: 'GitHub Device Authorization',
         step1: 'Copy Code & Open Link',

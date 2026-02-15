@@ -523,3 +523,16 @@ func (r *groupRepository) UpdateSortOrders(ctx context.Context, updates []servic
 
 	return nil
 }
+
+func (r *groupRepository) ListPublicGroupIDs(ctx context.Context) ([]int64, error) {
+	ids, err := r.client.Group.Query().
+		Where(
+			group.StatusEQ(service.StatusActive),
+			group.IsExclusiveEQ(false),
+		).
+		IDs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return ids, nil
+}

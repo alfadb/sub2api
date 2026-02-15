@@ -749,6 +749,13 @@ func (r *accountRepository) ListSchedulableByGroupID(ctx context.Context, groupI
 	})
 }
 
+func (r *accountRepository) ListSchedulableByGroupIDs(ctx context.Context, groupIDs []int64) ([]service.Account, error) {
+	return r.queryAccountsByGroupIDs(ctx, groupIDs, accountGroupQueryOptions{
+		status:      service.StatusActive,
+		schedulable: true,
+	})
+}
+
 func (r *accountRepository) ListSchedulableByPlatform(ctx context.Context, platform string) ([]service.Account, error) {
 	now := time.Now()
 	accounts, err := r.client.Account.Query().
@@ -1213,6 +1220,71 @@ func (r *accountRepository) queryAccountsByGroup(ctx context.Context, groupID in
 		Where(dbaccountgroup.GroupIDEQ(groupID))
 
 	// 通过 account_groups 中间表查询账号，并按需叠加状态/平台/调度能力过滤。
+	preds := make([]dbpredicate.Account, 0, 6)
+	preds = append(preds, dbaccount.DeletedAtIsNil())
+	if opts.status != "" {
+		preds = append(preds, dbaccount.StatusEQ(opts.status))
+	}
+	if len(opts.platforms) > 0 {
+		preds = append(preds, dbaccount.PlatformIn(opts.platforms...))
+	}
+	if opts.schedulable {
+		now := time.Now()
+		preds = append(preds,
+			dbaccount.SchedulableEQ(true),
+			tempUnschedulablePredicate(),
+			notExpiredPredicate(now),
+			dbaccount.Or(dbaccount.OverloadUntilIsNil(), dbaccount.OverloadUntilLTE(now)),
+			dbaccount.Or(dbaccount.RateLimitResetAtIsNil(), dbaccount.RateLimitResetAtLTE(now)),
+		)
+	}
+
+	if len(preds) > 0 {
+		q = q.Where(dbaccountgroup.HasAccountWith(preds...))
+	}
+
+	groups, err := q.
+		Order(
+			dbaccountgroup.ByPriority(),
+			dbaccountgroup.ByAccountField(dbaccount.FieldPriority),
+		).
+		WithAccount().
+		All(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	orderedIDs := make([]int64, 0, len(groups))
+	accountMap := make(map[int64]*dbent.Account, len(groups))
+	for _, ag := range groups {
+		if ag.Edges.Account == nil {
+			continue
+		}
+		if _, exists := accountMap[ag.AccountID]; exists {
+			continue
+		}
+		accountMap[ag.AccountID] = ag.Edges.Account
+		orderedIDs = append(orderedIDs, ag.AccountID)
+	}
+
+	accounts := make([]*dbent.Account, 0, len(orderedIDs))
+	for _, id := range orderedIDs {
+		if acc, ok := accountMap[id]; ok {
+			accounts = append(accounts, acc)
+		}
+	}
+
+	return r.accountsToService(ctx, accounts)
+}
+
+func (r *accountRepository) queryAccountsByGroupIDs(ctx context.Context, groupIDs []int64, opts accountGroupQueryOptions) ([]service.Account, error) {
+	if len(groupIDs) == 0 {
+		return []service.Account{}, nil
+	}
+
+	q := r.client.AccountGroup.Query().
+		Where(dbaccountgroup.GroupIDIn(groupIDs...))
+
 	preds := make([]dbpredicate.Account, 0, 6)
 	preds = append(preds, dbaccount.DeletedAtIsNil())
 	if opts.status != "" {

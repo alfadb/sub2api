@@ -189,6 +189,13 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 	// Get subscription (may be nil)
 	subscription, _ := middleware.GetSubscriptionFromContext(c)
 
+	effectiveAPIKey, err := h.resolveEffectiveAPIKey(c, apiKey, modelName)
+	if err != nil {
+		googleError(c, http.StatusServiceUnavailable, "No accessible groups: "+err.Error())
+		return
+	}
+	apiKey = effectiveAPIKey
+
 	// For Gemini native API, do not send Claude-style ping frames.
 	geminiConcurrency := NewConcurrencyHelper(h.concurrencyHelper.concurrencyService, SSEPingFormatNone, 0)
 

@@ -67,6 +67,28 @@ func NewOpenAIGatewayHandler(
 	}
 }
 
+func (h *OpenAIGatewayHandler) resolveEffectiveAPIKey(c *gin.Context, apiKey *service.APIKey, requestedModel string) (*service.APIKey, error) {
+	if apiKey.GroupID != nil && apiKey.Group != nil {
+		return apiKey, nil
+	}
+
+	allowedGroups := []int64{}
+	if apiKey.User != nil {
+		allowedGroups = apiKey.User.AllowedGroups
+	}
+
+	group, err := h.claudeGatewayService.ResolveGroupFromUserPermission(c.Request.Context(), allowedGroups, requestedModel)
+	if err != nil {
+		return nil, err
+	}
+
+	cloned := *apiKey
+	groupID := group.ID
+	cloned.GroupID = &groupID
+	cloned.Group = group
+	return &cloned, nil
+}
+
 // Responses handles OpenAI Responses API endpoint
 // POST /openai/v1/responses
 func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
@@ -182,6 +204,13 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 
 	// Get subscription info (may be nil)
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
+
+	effectiveAPIKey, err := h.resolveEffectiveAPIKey(c, apiKey, reqModel)
+	if err != nil {
+		h.errorResponse(c, http.StatusServiceUnavailable, "api_error", "No accessible groups: "+err.Error())
+		return
+	}
+	apiKey = effectiveAPIKey
 
 	// 0. Check if wait queue is full
 	maxWait := service.CalculateMaxWait(subject.Concurrency)

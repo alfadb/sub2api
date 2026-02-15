@@ -25,7 +25,6 @@ var (
 )
 
 // LiteLLMModelPricing LiteLLM价格数据结构
-// 只保留我们需要的字段，使用指针来处理可能缺失的值
 type LiteLLMModelPricing struct {
 	InputCostPerToken           float64 `json:"input_cost_per_token"`
 	OutputCostPerToken          float64 `json:"output_cost_per_token"`
@@ -34,7 +33,21 @@ type LiteLLMModelPricing struct {
 	LiteLLMProvider             string  `json:"litellm_provider"`
 	Mode                        string  `json:"mode"`
 	SupportsPromptCaching       bool    `json:"supports_prompt_caching"`
-	OutputCostPerImage          float64 `json:"output_cost_per_image"` // 图片生成模型每张图片价格
+	OutputCostPerImage          float64 `json:"output_cost_per_image"`
+	MaxInputTokens              int     `json:"max_input_tokens"`
+	MaxOutputTokens             int     `json:"max_output_tokens"`
+}
+
+type ModelInfo struct {
+	ID               string  `json:"id"`
+	Object           string  `json:"object"`
+	Type             string  `json:"type"`
+	DisplayName      string  `json:"display_name,omitempty"`
+	ContextWindow    int     `json:"context_window,omitempty"`
+	MaxOutputTokens  int     `json:"max_output_tokens,omitempty"`
+	InputPricePer1M  float64 `json:"input_price_per_1m,omitempty"`
+	OutputPricePer1M float64 `json:"output_price_per_1m,omitempty"`
+	LiteLLMProvider  string  `json:"litellm_provider,omitempty"`
 }
 
 // PricingRemoteClient 远程价格数据获取接口
@@ -53,6 +66,9 @@ type LiteLLMRawEntry struct {
 	Mode                        string   `json:"mode"`
 	SupportsPromptCaching       bool     `json:"supports_prompt_caching"`
 	OutputCostPerImage          *float64 `json:"output_cost_per_image"`
+	MaxInputTokens              *int     `json:"max_input_tokens"`
+	MaxOutputTokens             *int     `json:"max_output_tokens"`
+	MaxTokens                   *int     `json:"max_tokens"`
 }
 
 // PricingService 动态价格服务
@@ -323,6 +339,14 @@ func (s *PricingService) parsePricingData(body []byte) (map[string]*LiteLLMModel
 		}
 		if entry.OutputCostPerImage != nil {
 			pricing.OutputCostPerImage = *entry.OutputCostPerImage
+		}
+		if entry.MaxInputTokens != nil {
+			pricing.MaxInputTokens = *entry.MaxInputTokens
+		}
+		if entry.MaxOutputTokens != nil {
+			pricing.MaxOutputTokens = *entry.MaxOutputTokens
+		} else if entry.MaxTokens != nil {
+			pricing.MaxOutputTokens = *entry.MaxTokens
 		}
 
 		result[modelName] = pricing
@@ -751,4 +775,98 @@ func isNumeric(s string) bool {
 		}
 	}
 	return true
+}
+
+// GetModelPricingWithProvider 获取带 provider 前缀的模型定价
+// 优先级: provider/model > model (模糊匹配)
+func (s *PricingService) GetModelPricingWithProvider(provider, model string) *LiteLLMModelPricing {
+	// 1. 尝试 provider/model 格式
+	if provider != "" {
+		key := provider + "/" + model
+		if pricing := s.GetModelPricing(key); pricing != nil {
+			return pricing
+		}
+	}
+	// 2. 回退到纯模型名查询
+	return s.GetModelPricing(model)
+}
+
+// GetModelInfo 获取模型完整信息（用于 Models API 响应）
+func (s *PricingService) GetModelInfo(provider, model string) *ModelInfo {
+	pricing := s.GetModelPricingWithProvider(provider, model)
+	if pricing == nil {
+		return nil
+	}
+
+	id := model
+	if provider != "" {
+		id = provider + "/" + model
+	}
+
+	return &ModelInfo{
+		ID:               id,
+		Object:           "model",
+		Type:             "model",
+		DisplayName:      model,
+		ContextWindow:    pricing.MaxInputTokens,
+		MaxOutputTokens:  pricing.MaxOutputTokens,
+		InputPricePer1M:  pricing.InputCostPerToken * 1_000_000,
+		OutputPricePer1M: pricing.OutputCostPerToken * 1_000_000,
+		LiteLLMProvider:  pricing.LiteLLMProvider,
+	}
+}
+
+// ListAllModelsWithProvider 列出所有模型，带 provider 前缀
+// 返回 provider 去重后的模型列表
+func (s *PricingService) ListAllModelsWithProvider() []ModelInfo {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	seen := make(map[string]bool)
+	var result []ModelInfo
+
+	for key, pricing := range s.pricingData {
+		var provider, model string
+		idx := strings.Index(key, "/")
+		if idx > 0 && idx < len(key)-1 {
+			provider = key[:idx]
+			model = key[idx+1:]
+		} else {
+			model = key
+			provider = pricing.LiteLLMProvider
+		}
+
+		id := key
+		if !strings.Contains(key, "/") && provider != "" {
+			id = provider + "/" + key
+		}
+
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+
+		result = append(result, ModelInfo{
+			ID:               id,
+			Object:           "model",
+			Type:             "model",
+			DisplayName:      model,
+			ContextWindow:    pricing.MaxInputTokens,
+			MaxOutputTokens:  pricing.MaxOutputTokens,
+			InputPricePer1M:  pricing.InputCostPerToken * 1_000_000,
+			OutputPricePer1M: pricing.OutputCostPerToken * 1_000_000,
+			LiteLLMProvider:  pricing.LiteLLMProvider,
+		})
+	}
+
+	return result
+}
+
+// GetContextWindow 获取模型的上下文窗口大小
+func (s *PricingService) GetContextWindow(provider, model string) int {
+	pricing := s.GetModelPricingWithProvider(provider, model)
+	if pricing == nil {
+		return 0
+	}
+	return pricing.MaxInputTokens
 }

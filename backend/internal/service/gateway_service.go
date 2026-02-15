@@ -5307,6 +5307,69 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 	return models
 }
 
+func (s *GatewayService) GetAvailableModelsByGroupIDs(ctx context.Context, groupIDs []int64, platform string) []string {
+	if len(groupIDs) == 0 {
+		accounts, err := s.accountRepo.ListSchedulable(ctx)
+		if err != nil || len(accounts) == 0 {
+			return nil
+		}
+		return s.collectModelsFromAccounts(accounts, platform)
+	}
+
+	accounts, err := s.accountRepo.ListSchedulableByGroupIDs(ctx, groupIDs)
+	if err != nil || len(accounts) == 0 {
+		return nil
+	}
+
+	return s.collectModelsFromAccounts(accounts, platform)
+}
+
+func (s *GatewayService) collectModelsFromAccounts(accounts []Account, platform string) []string {
+	if platform != "" {
+		filtered := make([]Account, 0)
+		for _, acc := range accounts {
+			if acc.Platform == platform {
+				filtered = append(filtered, acc)
+			}
+		}
+		accounts = filtered
+	}
+
+	modelSet := make(map[string]struct{})
+	hasAnyModels := false
+
+	for _, acc := range accounts {
+		if isGitHubCopilotAccount(&acc) {
+			if ids := acc.GetAvailableModels(); len(ids) > 0 {
+				hasAnyModels = true
+				for _, id := range ids {
+					modelSet[id] = struct{}{}
+				}
+				continue
+			}
+		}
+
+		mapping := acc.GetModelMapping()
+		if len(mapping) > 0 {
+			hasAnyModels = true
+			for model := range mapping {
+				modelSet[model] = struct{}{}
+			}
+		}
+	}
+
+	if !hasAnyModels {
+		return nil
+	}
+
+	models := make([]string, 0, len(modelSet))
+	for model := range modelSet {
+		models = append(models, model)
+	}
+
+	return models
+}
+
 // reconcileCachedTokens 兼容 Kimi 等上游：
 // 将 OpenAI 风格的 cached_tokens 映射到 Claude 标准的 cache_read_input_tokens
 func reconcileCachedTokens(usage map[string]any) bool {
@@ -5323,4 +5386,73 @@ func reconcileCachedTokens(usage map[string]any) bool {
 	}
 	usage["cache_read_input_tokens"] = cached
 	return true
+}
+
+func (s *GatewayService) GetAccessibleGroupIDs(ctx context.Context, allowedGroups []int64) ([]int64, error) {
+	publicIDs, err := s.groupRepo.ListPublicGroupIDs(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	seen := make(map[int64]struct{})
+	for _, id := range publicIDs {
+		seen[id] = struct{}{}
+	}
+	for _, id := range allowedGroups {
+		seen[id] = struct{}{}
+	}
+
+	result := make([]int64, 0, len(seen))
+	for id := range seen {
+		result = append(result, id)
+	}
+	return result, nil
+}
+
+func (s *GatewayService) GetAccountGroupForBilling(account *Account) *Group {
+	if account == nil || len(account.Groups) == 0 {
+		return nil
+	}
+	return account.Groups[0]
+}
+
+func (s *GatewayService) ResolveGroupFromUserPermission(ctx context.Context, allowedGroups []int64, requestedModel string) (*Group, error) {
+	accessibleIDs, err := s.GetAccessibleGroupIDs(ctx, allowedGroups)
+	if err != nil {
+		return nil, fmt.Errorf("get accessible groups: %w", err)
+	}
+	if len(accessibleIDs) == 0 {
+		return nil, errors.New("no accessible groups")
+	}
+
+	if requestedModel != "" {
+		for _, groupID := range accessibleIDs {
+			accounts, err := s.accountRepo.ListSchedulableByGroupID(ctx, groupID)
+			if err != nil || len(accounts) == 0 {
+				continue
+			}
+			for _, acc := range accounts {
+				mapping := acc.GetModelMapping()
+				if len(mapping) == 0 {
+					group, err := s.groupRepo.GetByIDLite(ctx, groupID)
+					if err == nil {
+						return group, nil
+					}
+					continue
+				}
+				if _, ok := mapping[requestedModel]; ok {
+					group, err := s.groupRepo.GetByIDLite(ctx, groupID)
+					if err == nil {
+						return group, nil
+					}
+				}
+			}
+		}
+	}
+
+	group, err := s.groupRepo.GetByIDLite(ctx, accessibleIDs[0])
+	if err != nil {
+		return nil, fmt.Errorf("get group %d: %w", accessibleIDs[0], err)
+	}
+	return group, nil
 }

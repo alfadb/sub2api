@@ -16,7 +16,7 @@ const (
 	RoleUser  = "user"
 )
 
-// Platform constants
+// Platform constants (API protocol type)
 const (
 	PlatformAnthropic   = "anthropic"
 	PlatformOpenAI      = "openai"
@@ -25,6 +25,46 @@ const (
 	PlatformGemini      = "gemini"
 	PlatformAntigravity = "antigravity"
 )
+
+// Provider constants (actual service source)
+// Provider identifies the upstream service provider for a model,
+// enabling differentiation of context windows and pricing for the same model name.
+const (
+	ProviderOpenAI      = "openai"      // OpenAI 官方 API
+	ProviderAzure       = "azure"       // Azure OpenAI
+	ProviderCopilot     = "copilot"     // GitHub Copilot
+	ProviderAnthropic   = "anthropic"   // Anthropic 官方 API
+	ProviderGemini      = "gemini"      // Google Gemini 官方 API
+	ProviderVertexAI    = "vertex"      // Google Vertex AI
+	ProviderAntigravity = "antigravity" // Antigravity 服务
+	ProviderBedrock     = "bedrock"     // AWS Bedrock
+	ProviderOpenRouter  = "openrouter"  // OpenRouter 聚合
+	ProviderAggregator  = "aggregator"  // 通用聚合器
+)
+
+// ProviderToPlatform maps provider to the API protocol (platform) it uses.
+// This enables automatic platform inference from provider namespace.
+var ProviderToPlatform = map[string]string{
+	ProviderOpenAI:      PlatformOpenAI,
+	ProviderAzure:       PlatformOpenAI,
+	ProviderCopilot:     PlatformOpenAI,
+	ProviderAnthropic:   PlatformAnthropic,
+	ProviderGemini:      PlatformGemini,
+	ProviderVertexAI:    PlatformGemini,
+	ProviderAntigravity: PlatformAntigravity,
+	ProviderBedrock:     PlatformOpenAI, // Bedrock uses OpenAI-compatible format
+	ProviderOpenRouter:  PlatformOpenAI,
+	ProviderAggregator:  PlatformOpenAI,
+}
+
+// GetPlatformFromProvider returns the platform (API protocol) for a given provider.
+// Returns empty string if provider is unknown.
+func GetPlatformFromProvider(provider string) string {
+	if platform, ok := ProviderToPlatform[provider]; ok {
+		return platform
+	}
+	return ""
+}
 
 // Account type constants
 const (

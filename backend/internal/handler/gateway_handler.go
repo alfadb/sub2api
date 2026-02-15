@@ -15,7 +15,6 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	pkgerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
@@ -37,6 +36,7 @@ type GatewayHandler struct {
 	usageService              *service.UsageService
 	apiKeyService             *service.APIKeyService
 	errorPassthroughService   *service.ErrorPassthroughService
+	pricingService            *service.PricingService
 	concurrencyHelper         *ConcurrencyHelper
 	maxAccountSwitches        int
 	maxAccountSwitchesGemini  int
@@ -54,6 +54,7 @@ func NewGatewayHandler(
 	usageService *service.UsageService,
 	apiKeyService *service.APIKeyService,
 	errorPassthroughService *service.ErrorPassthroughService,
+	pricingService *service.PricingService,
 	cfg *config.Config,
 ) *GatewayHandler {
 	pingInterval := time.Duration(0)
@@ -78,6 +79,7 @@ func NewGatewayHandler(
 		usageService:              usageService,
 		apiKeyService:             apiKeyService,
 		errorPassthroughService:   errorPassthroughService,
+		pricingService:            pricingService,
 		concurrencyHelper:         NewConcurrencyHelper(concurrencyService, SSEPingFormatClaude, pingInterval),
 		maxAccountSwitches:        maxAccountSwitches,
 		maxAccountSwitchesGemini:  maxAccountSwitchesGemini,
@@ -170,6 +172,13 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 
 	// 获取订阅信息（可能为nil）- 提前获取用于后续检查
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
+
+	effectiveAPIKey, err := h.resolveEffectiveAPIKey(c, apiKey, reqModel)
+	if err != nil {
+		h.errorResponse(c, http.StatusServiceUnavailable, "api_error", "No accessible groups: "+err.Error())
+		return
+	}
+	apiKey = effectiveAPIKey
 
 	// 0. 检查wait队列是否已满
 	maxWait := service.CalculateMaxWait(subject.Concurrency)
@@ -693,97 +702,93 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 
 // Models handles listing available models
 // GET /v1/models
-// Returns models based on account configurations (model_mapping whitelist)
-// Falls back to default models if no whitelist is configured
 func (h *GatewayHandler) Models(c *gin.Context) {
 	apiKey, _ := middleware2.GetAPIKeyFromContext(c)
 
-	var groupID *int64
-	var platform string
-
-	if apiKey != nil && apiKey.Group != nil {
-		groupID = &apiKey.Group.ID
-		platform = apiKey.Group.Platform
+	var allowedGroups []int64
+	if apiKey != nil && apiKey.User != nil {
+		allowedGroups = apiKey.User.AllowedGroups
 	}
 
-	// Get available models from account configurations (without platform filter)
-	availableModels := h.gatewayService.GetAvailableModels(c.Request.Context(), groupID, "")
+	groupIDs, err := h.gatewayService.GetAccessibleGroupIDs(c.Request.Context(), allowedGroups)
+	if err != nil {
+		h.errorResponse(c, http.StatusInternalServerError, "api_error", "Failed to get accessible groups")
+		return
+	}
+
+	availableModels := h.gatewayService.GetAvailableModelsByGroupIDs(c.Request.Context(), groupIDs, "")
 
 	if len(availableModels) > 0 {
-		if platform == service.PlatformOpenAI || platform == service.PlatformCopilot || platform == service.PlatformAggregator {
-			defaults := make(map[string]openai.Model, len(openai.DefaultModels))
-			for _, dm := range openai.DefaultModels {
-				defaults[dm.ID] = dm
-			}
-			models := make([]openai.Model, 0, len(availableModels))
-			for _, modelID := range availableModels {
-				nsID := namespaceModelID(platform, modelID)
-				if dm, ok := defaults[modelID]; ok {
-					m := dm
-					m.ID = nsID
-					models = append(models, m)
-					continue
-				}
-				models = append(models, openai.Model{ID: nsID, Object: "model", Type: "model", DisplayName: modelID})
-			}
-			c.JSON(http.StatusOK, gin.H{"object": "list", "data": models})
-			return
-		}
-
-		models := make([]claude.Model, 0, len(availableModels))
-		for _, modelID := range availableModels {
-			nsID := namespaceModelID(platform, modelID)
-			models = append(models, claude.Model{ID: nsID, Type: "model", DisplayName: modelID, CreatedAt: "2024-01-01T00:00:00Z"})
-		}
+		models := h.buildModelListWithPricing("", availableModels)
 		c.JSON(http.StatusOK, gin.H{"object": "list", "data": models})
 		return
 	}
 
-	if platform == service.PlatformCopilot {
-		if models, err := h.gatewayService.ListGitHubCopilotModels(c.Request.Context(), groupID); err == nil && len(models) > 0 {
-			out := make([]openai.Model, 0, len(models))
-			for _, m := range models {
-				mm := m
-				mm.ID = namespaceModelID(platform, mm.ID)
-				out = append(out, mm)
-			}
-			c.JSON(http.StatusOK, gin.H{
-				"object": "list",
-				"data":   out,
-			})
-			return
-		}
-	}
-
-	// Fallback to default models
-	if platform == service.PlatformOpenAI || platform == service.PlatformCopilot || platform == service.PlatformAggregator {
-		out := make([]openai.Model, 0, len(openai.DefaultModels))
-		for _, m := range openai.DefaultModels {
-			mm := m
-			mm.ID = namespaceModelID(platform, mm.ID)
-			out = append(out, mm)
-		}
-		c.JSON(http.StatusOK, gin.H{
-			"object": "list",
-			"data":   out,
-		})
-		return
-	}
-
-	out := make([]claude.Model, 0, len(claude.DefaultModels))
-	for _, m := range claude.DefaultModels {
-		mm := m
-		mm.ID = namespaceModelID(platform, mm.ID)
-		out = append(out, mm)
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"object": "list",
-		"data":   out,
-	})
+	models := h.buildDefaultModelList("")
+	c.JSON(http.StatusOK, gin.H{"object": "list", "data": models})
 }
 
-func namespaceModelID(platform string, modelID string) string {
+func (h *GatewayHandler) buildModelListWithPricing(provider string, modelIDs []string) []openai.Model {
+	models := make([]openai.Model, 0, len(modelIDs))
+	defaults := make(map[string]openai.Model, len(openai.DefaultModels))
+	for _, dm := range openai.DefaultModels {
+		defaults[dm.ID] = dm
+	}
+
+	for _, modelID := range modelIDs {
+		nsID := namespaceModelID(provider, modelID)
+		m := openai.Model{ID: nsID, Object: "model", Type: "model", DisplayName: modelID}
+
+		if dm, ok := defaults[modelID]; ok {
+			m.DisplayName = dm.DisplayName
+		}
+
+		if h.pricingService != nil {
+			if info := h.pricingService.GetModelInfo(provider, modelID); info != nil {
+				m.ContextWindow = info.ContextWindow
+				m.MaxOutputTokens = info.MaxOutputTokens
+			}
+		}
+
+		models = append(models, m)
+	}
+	return models
+}
+
+func (h *GatewayHandler) buildDefaultModelList(provider string) []openai.Model {
+	models := make([]openai.Model, 0, len(openai.DefaultModels))
+	for _, m := range openai.DefaultModels {
+		mm := m
+		mm.ID = namespaceModelID(provider, mm.ID)
+		if h.pricingService != nil {
+			if info := h.pricingService.GetModelInfo(provider, m.ID); info != nil {
+				mm.ContextWindow = info.ContextWindow
+				mm.MaxOutputTokens = info.MaxOutputTokens
+			}
+		}
+		models = append(models, mm)
+	}
+	return models
+}
+
+func inferProviderFromGroup(platform string) string {
+	switch platform {
+	case service.PlatformOpenAI:
+		return service.ProviderOpenAI
+	case service.PlatformCopilot:
+		return service.ProviderCopilot
+	case service.PlatformGemini:
+		return service.ProviderGemini
+	case service.PlatformAntigravity:
+		return service.ProviderAntigravity
+	case service.PlatformAnthropic:
+		return service.ProviderAnthropic
+	default:
+		return platform
+	}
+}
+
+func namespaceModelID(provider string, modelID string) string {
 	modelID = strings.TrimSpace(modelID)
 	if modelID == "" {
 		return ""
@@ -792,16 +797,16 @@ func namespaceModelID(platform string, modelID string) string {
 		return modelID
 	}
 	if service.IsClaudeModelID(modelID) {
-		return service.PlatformAnthropic + "/" + modelID
+		return domain.ProviderAnthropic + "/" + modelID
 	}
 	if service.IsGeminiModelID(modelID) {
-		return service.PlatformGemini + "/" + modelID
+		return domain.ProviderGemini + "/" + modelID
 	}
-	platform = strings.TrimSpace(platform)
-	if platform == "" {
+	provider = strings.TrimSpace(provider)
+	if provider == "" {
 		return modelID
 	}
-	return platform + "/" + modelID
+	return provider + "/" + modelID
 }
 
 // AntigravityModels 返回 Antigravity 支持的全部模型
@@ -822,6 +827,24 @@ func cloneAPIKeyWithGroup(apiKey *service.APIKey, group *service.Group) *service
 	cloned.GroupID = &groupID
 	cloned.Group = group
 	return &cloned
+}
+
+func (h *GatewayHandler) resolveEffectiveAPIKey(c *gin.Context, apiKey *service.APIKey, requestedModel string) (*service.APIKey, error) {
+	if apiKey.GroupID != nil && apiKey.Group != nil {
+		return apiKey, nil
+	}
+
+	allowedGroups := []int64{}
+	if apiKey.User != nil {
+		allowedGroups = apiKey.User.AllowedGroups
+	}
+
+	group, err := h.gatewayService.ResolveGroupFromUserPermission(c.Request.Context(), allowedGroups, requestedModel)
+	if err != nil {
+		return nil, err
+	}
+
+	return cloneAPIKeyWithGroup(apiKey, group), nil
 }
 
 func replaceModelFieldRaw(body []byte, model string) []byte {

@@ -28,6 +28,25 @@ const (
 	PlatformAntigravity = domain.PlatformAntigravity
 )
 
+// Provider constants
+const (
+	ProviderOpenAI      = domain.ProviderOpenAI
+	ProviderAzure       = domain.ProviderAzure
+	ProviderCopilot     = domain.ProviderCopilot
+	ProviderAnthropic   = domain.ProviderAnthropic
+	ProviderGemini      = domain.ProviderGemini
+	ProviderVertexAI    = domain.ProviderVertexAI
+	ProviderAntigravity = domain.ProviderAntigravity
+	ProviderBedrock     = domain.ProviderBedrock
+	ProviderOpenRouter  = domain.ProviderOpenRouter
+	ProviderAggregator  = domain.ProviderAggregator
+)
+
+// GetPlatformFromProvider wraps domain.GetPlatformFromProvider
+func GetPlatformFromProvider(provider string) string {
+	return domain.GetPlatformFromProvider(provider)
+}
+
 // Account type constants
 const (
 	AccountTypeOAuth      = domain.AccountTypeOAuth      // OAuth类型账号（full scope: profile + inference）

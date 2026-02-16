@@ -130,8 +130,27 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 			return
 		}
 
+		// 未绑定分组的 API Key：具体分组会在 handler 中根据模型等信息解析，
+		// 计费/订阅检查也必须延后到解析后再进行。
+		if apiKey.GroupID == nil {
+			c.Set(string(ContextKeyAPIKey), apiKey)
+			c.Set(string(ContextKeyUser), AuthSubject{
+				UserID:      apiKey.User.ID,
+				Concurrency: apiKey.User.Concurrency,
+			})
+			c.Set(string(ContextKeyUserRole), apiKey.User.Role)
+			setGroupContext(c, nil)
+			c.Next()
+			return
+		}
+
+		if apiKey.Group == nil {
+			AbortWithError(c, 500, "INTERNAL_ERROR", "Failed to resolve API key group")
+			return
+		}
+
 		// 判断计费方式：订阅模式 vs 余额模式
-		isSubscriptionType := apiKey.Group != nil && apiKey.Group.IsSubscriptionType()
+		isSubscriptionType := apiKey.Group.IsSubscriptionType()
 
 		if isSubscriptionType && subscriptionService != nil {
 			// 订阅模式：验证订阅

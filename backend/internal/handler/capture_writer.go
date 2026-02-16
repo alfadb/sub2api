@@ -60,7 +60,7 @@ func (w *captureWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 }
 
 func (w *captureWriter) CloseNotify() <-chan bool {
-	if cn, ok := w.base.(http.CloseNotifier); ok {
+	if cn, ok := w.base.(interface{ CloseNotify() <-chan bool }); ok {
 		return cn.CloseNotify()
 	}
 	ch := make(chan bool)

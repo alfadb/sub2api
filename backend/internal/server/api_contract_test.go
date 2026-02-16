@@ -876,6 +876,17 @@ func (r *stubGroupRepo) ListActiveByPlatform(ctx context.Context, platform strin
 	return out, nil
 }
 
+func (r *stubGroupRepo) ListPublicGroupIDs(ctx context.Context) ([]int64, error) {
+	ids := make([]int64, 0, len(r.active))
+	for i := range r.active {
+		g := r.active[i]
+		if g.Status == service.StatusActive && !g.IsExclusive {
+			ids = append(ids, g.ID)
+		}
+	}
+	return ids, nil
+}
+
 func (stubGroupRepo) ExistsByName(ctx context.Context, name string) (bool, error) {
 	return false, errors.New("not implemented")
 }
@@ -986,6 +997,10 @@ func (s *stubAccountRepo) ListSchedulable(ctx context.Context) ([]service.Accoun
 
 func (s *stubAccountRepo) ListSchedulableByGroupID(ctx context.Context, groupID int64) ([]service.Account, error) {
 	return nil, errors.New("not implemented")
+}
+
+func (s *stubAccountRepo) ListSchedulableByGroupIDs(ctx context.Context, groupIDs []int64) ([]service.Account, error) {
+	return nil, nil
 }
 
 func (s *stubAccountRepo) ListSchedulableByPlatform(ctx context.Context, platform string) ([]service.Account, error) {

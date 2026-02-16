@@ -1645,7 +1645,7 @@ func (h *AccountHandler) RefreshAvailableModels(c *gin.Context) {
 		response.BadRequest(c, "Account not found")
 		return
 	}
-	if !(account.Platform == service.PlatformCopilot || service.IsGitHubCopilotAccount(account)) {
+	if account.Platform != service.PlatformCopilot && !service.IsGitHubCopilotAccount(account) {
 		response.BadRequest(c, "Only GitHub Copilot accounts support model refresh")
 		return
 	}

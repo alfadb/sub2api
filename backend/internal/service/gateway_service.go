@@ -4596,6 +4596,16 @@ func (s *GatewayService) RecordUsage(ctx context.Context, input *RecordUsageInpu
 	user := input.User
 	account := input.Account
 	subscription := input.Subscription
+	if subscription == nil && apiKey != nil && user != nil && apiKey.Group != nil && apiKey.Group.IsSubscriptionType() {
+		if s.userSubRepo == nil {
+			return errors.New("subscription repository not configured")
+		}
+		sub, err := s.userSubRepo.GetActiveByUserIDAndGroupID(ctx, user.ID, apiKey.Group.ID)
+		if err != nil {
+			return fmt.Errorf("get active subscription: %w", err)
+		}
+		subscription = sub
+	}
 
 	// 强制缓存计费：将 input_tokens 转为 cache_read_input_tokens
 	// 用于粘性会话切换时的特殊计费处理

@@ -55,7 +55,17 @@ func TestParseModelNamespace(t *testing.T) {
 			input: "copilot/gpt-5.2",
 			expected: ModelNamespace{
 				Provider:     ProviderCopilot,
-				Platform:     PlatformOpenAI,
+				Platform:     PlatformCopilot,
+				Model:        "gpt-5.2",
+				HasNamespace: true,
+			},
+		},
+		{
+			name:  "provider namespace - aggregator",
+			input: "aggregator/gpt-5.2",
+			expected: ModelNamespace{
+				Provider:     ProviderAggregator,
+				Platform:     PlatformAggregator,
 				Model:        "gpt-5.2",
 				HasNamespace: true,
 			},
@@ -95,7 +105,7 @@ func TestParseModelNamespace(t *testing.T) {
 			input: "github/gpt-4o",
 			expected: ModelNamespace{
 				Provider:     ProviderCopilot,
-				Platform:     PlatformOpenAI,
+				Platform:     PlatformCopilot,
 				Model:        "gpt-4o",
 				HasNamespace: true,
 			},
@@ -179,7 +189,8 @@ func TestProviderToPlatform(t *testing.T) {
 	}{
 		{domain.ProviderOpenAI, true, domain.PlatformOpenAI},
 		{domain.ProviderAzure, true, domain.PlatformOpenAI},
-		{domain.ProviderCopilot, true, domain.PlatformOpenAI},
+		{domain.ProviderCopilot, true, domain.PlatformCopilot},
+		{domain.ProviderAggregator, true, domain.PlatformAggregator},
 		{domain.ProviderAnthropic, true, domain.PlatformAnthropic},
 		{domain.ProviderGemini, true, domain.PlatformGemini},
 		{domain.ProviderVertexAI, true, domain.PlatformGemini},

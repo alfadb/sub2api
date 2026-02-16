@@ -888,16 +888,12 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				} else if v, ok := reqBody["max_completion_tokens"]; ok {
 					reqBody["max_output_tokens"] = v
 					delete(reqBody, "max_completion_tokens")
-					if _, ok := reqBody["max_tokens"]; ok {
-						delete(reqBody, "max_tokens")
-					}
+					delete(reqBody, "max_tokens")
 					bodyModified = true
 				} else if v, ok := reqBody["max_tokens"]; ok {
 					reqBody["max_output_tokens"] = v
 					delete(reqBody, "max_tokens")
-					if _, ok := reqBody["max_completion_tokens"]; ok {
-						delete(reqBody, "max_completion_tokens")
-					}
+					delete(reqBody, "max_completion_tokens")
 					bodyModified = true
 				}
 			}

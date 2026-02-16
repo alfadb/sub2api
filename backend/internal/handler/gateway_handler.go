@@ -724,7 +724,7 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 		return
 	}
 
-	models := h.buildDefaultModelList("")
+	models := h.buildDefaultModelList(domain.ProviderOpenAI)
 	c.JSON(http.StatusOK, gin.H{"object": "list", "data": models})
 }
 
@@ -736,17 +736,29 @@ func (h *GatewayHandler) buildModelListWithPricing(provider string, modelIDs []s
 	}
 
 	for _, modelID := range modelIDs {
-		nsID := namespaceModelID(provider, modelID)
-		m := openai.Model{ID: nsID, Object: "model", Type: "model", DisplayName: modelID}
+		raw := strings.TrimSpace(modelID)
+		if raw == "" {
+			continue
+		}
 
-		if dm, ok := defaults[modelID]; ok {
+		modelProvider := strings.TrimSpace(provider)
+		modelName := raw
+		if idx := strings.Index(raw, "/"); idx > 0 && idx < len(raw)-1 {
+			modelProvider = strings.ToLower(strings.TrimSpace(raw[:idx]))
+			modelName = strings.TrimSpace(raw[idx+1:])
+		}
+
+		nsID := namespaceModelID(modelProvider, modelName)
+		m := openai.Model{ID: nsID, Object: "model", Type: "model", DisplayName: modelName}
+		if dm, ok := defaults[modelName]; ok {
 			m.DisplayName = dm.DisplayName
 		}
 
 		if h.pricingService != nil {
-			if info := h.pricingService.GetModelInfo(provider, modelID); info != nil {
+			if info := h.pricingService.GetModelInfo(modelProvider, modelName); info != nil {
 				m.ContextWindow = info.ContextWindow
 				m.MaxOutputTokens = info.MaxOutputTokens
+				m.Source = info.Source
 			}
 		}
 
@@ -764,6 +776,7 @@ func (h *GatewayHandler) buildDefaultModelList(provider string) []openai.Model {
 			if info := h.pricingService.GetModelInfo(provider, m.ID); info != nil {
 				mm.ContextWindow = info.ContextWindow
 				mm.MaxOutputTokens = info.MaxOutputTokens
+				mm.Source = info.Source
 			}
 		}
 		models = append(models, mm)

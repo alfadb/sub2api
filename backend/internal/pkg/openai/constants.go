@@ -13,6 +13,7 @@ type Model struct {
 	DisplayName     string `json:"display_name"`
 	ContextWindow   int    `json:"context_window,omitempty"`
 	MaxOutputTokens int    `json:"max_output_tokens,omitempty"`
+	Source          string `json:"source,omitempty"`
 }
 
 // DefaultModels OpenAI models list

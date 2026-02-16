@@ -126,6 +126,9 @@ func (m *mockAccountRepoForPlatform) ListSchedulable(ctx context.Context) ([]Acc
 func (m *mockAccountRepoForPlatform) ListSchedulableByGroupID(ctx context.Context, groupID int64) ([]Account, error) {
 	return nil, nil
 }
+func (m *mockAccountRepoForPlatform) ListSchedulableByGroupIDs(ctx context.Context, groupIDs []int64) ([]Account, error) {
+	return nil, nil
+}
 func (m *mockAccountRepoForPlatform) ListSchedulableByPlatforms(ctx context.Context, platforms []string) ([]Account, error) {
 	var result []Account
 	platformSet := make(map[string]bool)
@@ -255,6 +258,23 @@ func (m *mockGroupRepoForGateway) ListActive(ctx context.Context) ([]Group, erro
 }
 func (m *mockGroupRepoForGateway) ListActiveByPlatform(ctx context.Context, platform string) ([]Group, error) {
 	return nil, nil
+}
+
+func (m *mockGroupRepoForGateway) ListPublicGroupIDs(ctx context.Context) ([]int64, error) {
+	ids := make([]int64, 0, len(m.groups))
+	for id, g := range m.groups {
+		if g == nil {
+			continue
+		}
+		if g.Status == StatusActive && !g.IsExclusive {
+			if g.ID > 0 {
+				ids = append(ids, g.ID)
+			} else {
+				ids = append(ids, id)
+			}
+		}
+	}
+	return ids, nil
 }
 func (m *mockGroupRepoForGateway) ExistsByName(ctx context.Context, name string) (bool, error) {
 	return false, nil

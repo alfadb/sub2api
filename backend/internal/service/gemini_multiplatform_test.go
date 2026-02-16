@@ -111,6 +111,9 @@ func (m *mockAccountRepoForGemini) ListSchedulable(ctx context.Context) ([]Accou
 func (m *mockAccountRepoForGemini) ListSchedulableByGroupID(ctx context.Context, groupID int64) ([]Account, error) {
 	return nil, nil
 }
+func (m *mockAccountRepoForGemini) ListSchedulableByGroupIDs(ctx context.Context, groupIDs []int64) ([]Account, error) {
+	return nil, nil
+}
 func (m *mockAccountRepoForGemini) ListSchedulableByPlatforms(ctx context.Context, platforms []string) ([]Account, error) {
 	if m.listByPlatformFunc != nil {
 		return m.listByPlatformFunc(ctx, platforms)
@@ -207,6 +210,22 @@ func (m *mockGroupRepoForGemini) ListWithFilters(ctx context.Context, params pag
 func (m *mockGroupRepoForGemini) ListActive(ctx context.Context) ([]Group, error) { return nil, nil }
 func (m *mockGroupRepoForGemini) ListActiveByPlatform(ctx context.Context, platform string) ([]Group, error) {
 	return nil, nil
+}
+func (m *mockGroupRepoForGemini) ListPublicGroupIDs(ctx context.Context) ([]int64, error) {
+	ids := make([]int64, 0, len(m.groups))
+	for id, g := range m.groups {
+		if g == nil {
+			continue
+		}
+		if g.Status == StatusActive && !g.IsExclusive {
+			if g.ID > 0 {
+				ids = append(ids, g.ID)
+			} else {
+				ids = append(ids, id)
+			}
+		}
+	}
+	return ids, nil
 }
 func (m *mockGroupRepoForGemini) ExistsByName(ctx context.Context, name string) (bool, error) {
 	return false, nil

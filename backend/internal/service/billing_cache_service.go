@@ -458,7 +458,7 @@ func (s *BillingCacheService) CheckBillingEligibility(ctx context.Context, user 
 	}
 
 	// 判断计费模式
-	isSubscriptionMode := group != nil && group.IsSubscriptionType() && subscription != nil
+	isSubscriptionMode := group != nil && group.IsSubscriptionType()
 
 	if isSubscriptionMode {
 		return s.checkSubscriptionEligibility(ctx, user.ID, group, subscription)

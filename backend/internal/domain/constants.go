@@ -47,14 +47,14 @@ const (
 var ProviderToPlatform = map[string]string{
 	ProviderOpenAI:      PlatformOpenAI,
 	ProviderAzure:       PlatformOpenAI,
-	ProviderCopilot:     PlatformOpenAI,
+	ProviderCopilot:     PlatformCopilot,
 	ProviderAnthropic:   PlatformAnthropic,
 	ProviderGemini:      PlatformGemini,
 	ProviderVertexAI:    PlatformGemini,
 	ProviderAntigravity: PlatformAntigravity,
 	ProviderBedrock:     PlatformOpenAI, // Bedrock uses OpenAI-compatible format
 	ProviderOpenRouter:  PlatformOpenAI,
-	ProviderAggregator:  PlatformOpenAI,
+	ProviderAggregator:  PlatformAggregator,
 }
 
 // GetPlatformFromProvider returns the platform (API protocol) for a given provider.

@@ -154,7 +154,7 @@ func geminiToolsToClaudeTools(tools []antigravity.GeminiToolDeclaration) []any {
 			if name == "" {
 				continue
 			}
-			params := any(fd.Parameters)
+			params := fd.Parameters
 			if params == nil {
 				params = map[string]any{"type": "object", "properties": map[string]any{}}
 			}

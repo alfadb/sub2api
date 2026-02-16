@@ -97,7 +97,7 @@ func (s *accountRepoStubForCountTokens) List(ctx context.Context, params paginat
 	panic("unexpected List call")
 }
 
-func (s *accountRepoStubForCountTokens) ListWithFilters(ctx context.Context, params pagination.PaginationParams, platform, accountType, status, search string) ([]svc.Account, *pagination.PaginationResult, error) {
+func (s *accountRepoStubForCountTokens) ListWithFilters(ctx context.Context, params pagination.PaginationParams, platform, accountType, status, search string, groupID int64) ([]svc.Account, *pagination.PaginationResult, error) {
 	panic("unexpected ListWithFilters call")
 }
 

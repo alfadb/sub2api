@@ -36,6 +36,7 @@ type LiteLLMModelPricing struct {
 	OutputCostPerImage          float64 `json:"output_cost_per_image"`
 	MaxInputTokens              int     `json:"max_input_tokens"`
 	MaxOutputTokens             int     `json:"max_output_tokens"`
+	Source                      string  `json:"source,omitempty"`
 }
 
 type ModelInfo struct {
@@ -48,6 +49,7 @@ type ModelInfo struct {
 	InputPricePer1M  float64 `json:"input_price_per_1m,omitempty"`
 	OutputPricePer1M float64 `json:"output_price_per_1m,omitempty"`
 	LiteLLMProvider  string  `json:"litellm_provider,omitempty"`
+	Source           string  `json:"source,omitempty"`
 }
 
 // PricingRemoteClient 远程价格数据获取接口
@@ -69,6 +71,7 @@ type LiteLLMRawEntry struct {
 	MaxInputTokens              *int     `json:"max_input_tokens"`
 	MaxOutputTokens             *int     `json:"max_output_tokens"`
 	MaxTokens                   *int     `json:"max_tokens"`
+	Source                      string   `json:"source"`
 }
 
 // PricingService 动态价格服务
@@ -323,6 +326,7 @@ func (s *PricingService) parsePricingData(body []byte) (map[string]*LiteLLMModel
 			LiteLLMProvider:       entry.LiteLLMProvider,
 			Mode:                  entry.Mode,
 			SupportsPromptCaching: entry.SupportsPromptCaching,
+			Source:                strings.TrimSpace(entry.Source),
 		}
 
 		if entry.InputCostPerToken != nil {
@@ -813,6 +817,7 @@ func (s *PricingService) GetModelInfo(provider, model string) *ModelInfo {
 		InputPricePer1M:  pricing.InputCostPerToken * 1_000_000,
 		OutputPricePer1M: pricing.OutputCostPerToken * 1_000_000,
 		LiteLLMProvider:  pricing.LiteLLMProvider,
+		Source:           pricing.Source,
 	}
 }
 
@@ -856,6 +861,7 @@ func (s *PricingService) ListAllModelsWithProvider() []ModelInfo {
 			InputPricePer1M:  pricing.InputCostPerToken * 1_000_000,
 			OutputPricePer1M: pricing.OutputCostPerToken * 1_000_000,
 			LiteLLMProvider:  pricing.LiteLLMProvider,
+			Source:           pricing.Source,
 		})
 	}
 

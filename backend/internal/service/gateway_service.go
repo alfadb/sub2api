@@ -5348,12 +5348,31 @@ func (s *GatewayService) collectModelsFromAccounts(accounts []Account, platform 
 	modelSet := make(map[string]struct{})
 	hasAnyModels := false
 
+	namespacedModel := func(provider, model string) string {
+		m := strings.TrimSpace(model)
+		if m == "" {
+			return ""
+		}
+		if strings.Contains(m, "/") {
+			return m
+		}
+		p := strings.TrimSpace(provider)
+		if p == "" {
+			return m
+		}
+		return p + "/" + m
+	}
+
 	for _, acc := range accounts {
+		provider := inferProviderFromAccount(&acc)
 		if isGitHubCopilotAccount(&acc) {
 			if ids := acc.GetAvailableModels(); len(ids) > 0 {
 				hasAnyModels = true
 				for _, id := range ids {
-					modelSet[id] = struct{}{}
+					nsID := namespacedModel(provider, id)
+					if nsID != "" {
+						modelSet[nsID] = struct{}{}
+					}
 				}
 				continue
 			}
@@ -5363,7 +5382,10 @@ func (s *GatewayService) collectModelsFromAccounts(accounts []Account, platform 
 		if len(mapping) > 0 {
 			hasAnyModels = true
 			for model := range mapping {
-				modelSet[model] = struct{}{}
+				nsModel := namespacedModel(provider, model)
+				if nsModel != "" {
+					modelSet[nsModel] = struct{}{}
+				}
 			}
 		}
 	}

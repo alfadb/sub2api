@@ -771,23 +771,6 @@ func (h *GatewayHandler) buildDefaultModelList(provider string) []openai.Model {
 	return models
 }
 
-func inferProviderFromGroup(platform string) string {
-	switch platform {
-	case service.PlatformOpenAI:
-		return service.ProviderOpenAI
-	case service.PlatformCopilot:
-		return service.ProviderCopilot
-	case service.PlatformGemini:
-		return service.ProviderGemini
-	case service.PlatformAntigravity:
-		return service.ProviderAntigravity
-	case service.PlatformAnthropic:
-		return service.ProviderAnthropic
-	default:
-		return platform
-	}
-}
-
 func namespaceModelID(provider string, modelID string) string {
 	modelID = strings.TrimSpace(modelID)
 	if modelID == "" {
@@ -1243,6 +1226,13 @@ func (h *GatewayHandler) CountTokens(c *gin.Context) {
 	}
 
 	setOpsRequestContext(c, parsedReq.Model, parsedReq.Stream, body)
+
+	effectiveAPIKey, err := h.resolveEffectiveAPIKey(c, apiKey, parsedReq.Model)
+	if err != nil {
+		h.errorResponse(c, http.StatusServiceUnavailable, "api_error", "No accessible groups: "+err.Error())
+		return
+	}
+	apiKey = effectiveAPIKey
 
 	// 获取订阅信息（可能为nil）
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)

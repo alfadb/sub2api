@@ -374,11 +374,12 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 
 		baseURL := strings.TrimSpace(account.GetCredential("base_url"))
 		if baseURL == "" {
-			if account.Platform == PlatformCopilot {
+			switch account.Platform {
+			case PlatformCopilot:
 				baseURL = "https://api.githubcopilot.com"
-			} else if account.Platform == PlatformAggregator {
+			case PlatformAggregator:
 				return s.sendErrorAndEnd(c, "Base URL is required")
-			} else {
+			default:
 				baseURL = "https://api.openai.com"
 			}
 		}

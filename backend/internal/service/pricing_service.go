@@ -26,17 +26,18 @@ var (
 
 // LiteLLMModelPricing LiteLLM价格数据结构
 type LiteLLMModelPricing struct {
-	InputCostPerToken           float64 `json:"input_cost_per_token"`
-	OutputCostPerToken          float64 `json:"output_cost_per_token"`
-	CacheCreationInputTokenCost float64 `json:"cache_creation_input_token_cost"`
-	CacheReadInputTokenCost     float64 `json:"cache_read_input_token_cost"`
-	LiteLLMProvider             string  `json:"litellm_provider"`
-	Mode                        string  `json:"mode"`
-	SupportsPromptCaching       bool    `json:"supports_prompt_caching"`
-	OutputCostPerImage          float64 `json:"output_cost_per_image"`
-	MaxInputTokens              int     `json:"max_input_tokens"`
-	MaxOutputTokens             int     `json:"max_output_tokens"`
-	Source                      string  `json:"source,omitempty"`
+	InputCostPerToken                   float64 `json:"input_cost_per_token"`
+	OutputCostPerToken                  float64 `json:"output_cost_per_token"`
+	CacheCreationInputTokenCost         float64 `json:"cache_creation_input_token_cost"`
+	CacheCreationInputTokenCostAbove1hr float64 `json:"cache_creation_input_token_cost_above_1hr"`
+	CacheReadInputTokenCost             float64 `json:"cache_read_input_token_cost"`
+	LiteLLMProvider                     string  `json:"litellm_provider"`
+	Mode                                string  `json:"mode"`
+	SupportsPromptCaching               bool    `json:"supports_prompt_caching"`
+	OutputCostPerImage                  float64 `json:"output_cost_per_image"`
+	MaxInputTokens                      int     `json:"max_input_tokens"`
+	MaxOutputTokens                     int     `json:"max_output_tokens"`
+	Source                              string  `json:"source,omitempty"`
 }
 
 type ModelInfo struct {
@@ -60,18 +61,19 @@ type PricingRemoteClient interface {
 
 // LiteLLMRawEntry 用于解析原始JSON数据
 type LiteLLMRawEntry struct {
-	InputCostPerToken           *float64 `json:"input_cost_per_token"`
-	OutputCostPerToken          *float64 `json:"output_cost_per_token"`
-	CacheCreationInputTokenCost *float64 `json:"cache_creation_input_token_cost"`
-	CacheReadInputTokenCost     *float64 `json:"cache_read_input_token_cost"`
-	LiteLLMProvider             string   `json:"litellm_provider"`
-	Mode                        string   `json:"mode"`
-	SupportsPromptCaching       bool     `json:"supports_prompt_caching"`
-	OutputCostPerImage          *float64 `json:"output_cost_per_image"`
-	MaxInputTokens              *int     `json:"max_input_tokens"`
-	MaxOutputTokens             *int     `json:"max_output_tokens"`
-	MaxTokens                   *int     `json:"max_tokens"`
-	Source                      string   `json:"source"`
+	InputCostPerToken                   *float64 `json:"input_cost_per_token"`
+	OutputCostPerToken                  *float64 `json:"output_cost_per_token"`
+	CacheCreationInputTokenCost         *float64 `json:"cache_creation_input_token_cost"`
+	CacheCreationInputTokenCostAbove1hr *float64 `json:"cache_creation_input_token_cost_above_1hr"`
+	CacheReadInputTokenCost             *float64 `json:"cache_read_input_token_cost"`
+	LiteLLMProvider                     string   `json:"litellm_provider"`
+	Mode                                string   `json:"mode"`
+	SupportsPromptCaching               bool     `json:"supports_prompt_caching"`
+	OutputCostPerImage                  *float64 `json:"output_cost_per_image"`
+	MaxInputTokens                      *int     `json:"max_input_tokens"`
+	MaxOutputTokens                     *int     `json:"max_output_tokens"`
+	MaxTokens                           *int     `json:"max_tokens"`
+	Source                              string   `json:"source"`
 }
 
 // PricingService 动态价格服务
@@ -337,6 +339,9 @@ func (s *PricingService) parsePricingData(body []byte) (map[string]*LiteLLMModel
 		}
 		if entry.CacheCreationInputTokenCost != nil {
 			pricing.CacheCreationInputTokenCost = *entry.CacheCreationInputTokenCost
+		}
+		if entry.CacheCreationInputTokenCostAbove1hr != nil {
+			pricing.CacheCreationInputTokenCostAbove1hr = *entry.CacheCreationInputTokenCostAbove1hr
 		}
 		if entry.CacheReadInputTokenCost != nil {
 			pricing.CacheReadInputTokenCost = *entry.CacheReadInputTokenCost

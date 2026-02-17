@@ -747,15 +747,32 @@ func (h *GatewayHandler) buildModelListWithPricing(provider string, modelIDs []s
 			continue
 		}
 
-		modelProvider := strings.TrimSpace(provider)
-		modelName := raw
-		if idx := strings.Index(raw, "/"); idx > 0 && idx < len(raw)-1 {
-			modelProvider = strings.ToLower(strings.TrimSpace(raw[:idx]))
-			modelName = strings.TrimSpace(raw[idx+1:])
+		ns := service.ParseModelNamespace(raw)
+		modelProvider := strings.ToLower(strings.TrimSpace(ns.Provider))
+		modelName := strings.TrimSpace(ns.Model)
+		hasNamespace := ns.HasNamespace && modelProvider != "" && modelName != ""
+		if !hasNamespace {
+			modelName = raw
+			modelProvider = strings.ToLower(strings.TrimSpace(provider))
+			if modelProvider == "" {
+				inferred := service.ParseModelNamespace(modelName)
+				modelProvider = strings.ToLower(strings.TrimSpace(inferred.Provider))
+			}
+		}
+		if strings.TrimSpace(modelName) == "" {
+			continue
 		}
 
-		nsID := namespaceModelID(modelProvider, modelName)
-		m := openai.Model{ID: nsID, Object: "model", Type: "model", DisplayName: modelName}
+		nsID := modelName
+		if modelProvider != "" {
+			nsID = modelProvider + "/" + modelName
+		}
+		m := openai.Model{ID: nsID, Object: "model", Type: "model", DisplayName: modelName, OwnedBy: strings.TrimSpace(modelProvider)}
+		if m.OwnedBy == "" {
+			if idx := strings.Index(nsID, "/"); idx > 0 {
+				m.OwnedBy = nsID[:idx]
+			}
+		}
 		if dm, ok := defaults[modelName]; ok {
 			m.DisplayName = dm.DisplayName
 		}

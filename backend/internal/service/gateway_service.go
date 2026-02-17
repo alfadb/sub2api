@@ -5475,6 +5475,20 @@ func (s *GatewayService) GetAccessibleGroupIDs(ctx context.Context, allowedGroup
 	return result, nil
 }
 
+func (s *GatewayService) LoadUserAllowedGroupIDs(ctx context.Context, userID int64) ([]int64, error) {
+	if s == nil || s.userRepo == nil || userID <= 0 {
+		return nil, nil
+	}
+	user, err := s.userRepo.GetByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, nil
+	}
+	return user.AllowedGroups, nil
+}
+
 func (s *GatewayService) GetAccountGroupForBilling(account *Account) *Group {
 	if account == nil || len(account.Groups) == 0 {
 		return nil
@@ -5498,19 +5512,12 @@ func (s *GatewayService) ResolveGroupFromUserPermission(ctx context.Context, all
 				continue
 			}
 			for _, acc := range accounts {
-				mapping := acc.GetModelMapping()
-				if len(mapping) == 0 {
-					group, err := s.groupRepo.GetByIDLite(ctx, groupID)
-					if err == nil {
-						return group, nil
-					}
+				if !acc.IsModelSupported(requestedModel) {
 					continue
 				}
-				if _, ok := mapping[requestedModel]; ok {
-					group, err := s.groupRepo.GetByIDLite(ctx, groupID)
-					if err == nil {
-						return group, nil
-					}
+				group, err := s.groupRepo.GetByIDLite(ctx, groupID)
+				if err == nil {
+					return group, nil
 				}
 			}
 		}

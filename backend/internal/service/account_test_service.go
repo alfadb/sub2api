@@ -216,10 +216,16 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 		}
 	} else if account.Type == "apikey" {
 		isGitHubCopilot := isGitHubCopilotAccount(account)
+		var copilotTokenErr error
 		if isGitHubCopilot && s.githubCopilotTokenProvider != nil {
-			if token, err := s.githubCopilotTokenProvider.GetAccessToken(ctx, account); err == nil && strings.TrimSpace(token) != "" {
+			token, err := s.githubCopilotTokenProvider.GetAccessToken(ctx, account)
+			if err != nil {
+				copilotTokenErr = err
+			} else if strings.TrimSpace(token) != "" {
 				useBearer = true
 				authToken = token
+			} else {
+				copilotTokenErr = errors.New("copilot access token is empty")
 			}
 		}
 		if authToken == "" {
@@ -228,6 +234,9 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 			authToken = account.GetCredential("api_key")
 			if authToken == "" {
 				if isGitHubCopilot {
+					if copilotTokenErr != nil {
+						return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to get Copilot access token: %s", copilotTokenErr.Error()))
+					}
 					return s.sendErrorAndEnd(c, "No GitHub token or Copilot bearer token available")
 				}
 				return s.sendErrorAndEnd(c, "No API key available")
@@ -357,15 +366,24 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	} else if account.Type == "apikey" {
 		// API Key - use Platform API
 		isGitHubCopilot = isGitHubCopilotAccount(account)
+		var copilotTokenErr error
 		if isGitHubCopilot && s.githubCopilotTokenProvider != nil {
-			if token, err := s.githubCopilotTokenProvider.GetAccessToken(ctx, account); err == nil && strings.TrimSpace(token) != "" {
+			token, err := s.githubCopilotTokenProvider.GetAccessToken(ctx, account)
+			if err != nil {
+				copilotTokenErr = err
+			} else if strings.TrimSpace(token) != "" {
 				authToken = token
+			} else {
+				copilotTokenErr = errors.New("copilot access token is empty")
 			}
 		}
 		if authToken == "" {
 			authToken = strings.TrimSpace(account.GetCredential("api_key"))
 			if authToken == "" {
 				if isGitHubCopilot {
+					if copilotTokenErr != nil {
+						return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to get Copilot access token: %s", copilotTokenErr.Error()))
+					}
 					return s.sendErrorAndEnd(c, "No GitHub token or Copilot bearer token available")
 				}
 				return s.sendErrorAndEnd(c, "No API key available")
@@ -949,6 +967,21 @@ func (s *AccountTestService) processOpenAIStream(c *gin.Context, body io.Reader)
 
 // sendEvent sends a SSE event to the client
 func (s *AccountTestService) sendEvent(c *gin.Context, event TestEvent) {
+	if c != nil {
+		h := c.Writer.Header()
+		if strings.TrimSpace(h.Get("Content-Type")) == "" {
+			h.Set("Content-Type", "text/event-stream")
+		}
+		if strings.TrimSpace(h.Get("Cache-Control")) == "" {
+			h.Set("Cache-Control", "no-cache")
+		}
+		if strings.TrimSpace(h.Get("Connection")) == "" {
+			h.Set("Connection", "keep-alive")
+		}
+		if strings.TrimSpace(h.Get("X-Accel-Buffering")) == "" {
+			h.Set("X-Accel-Buffering", "no")
+		}
+	}
 	eventJSON, _ := json.Marshal(event)
 	if _, err := fmt.Fprintf(c.Writer, "data: %s\n\n", eventJSON); err != nil {
 		log.Printf("failed to write SSE event: %v", err)

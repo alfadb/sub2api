@@ -708,6 +708,12 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 	var allowedGroups []int64
 	if apiKey != nil && apiKey.User != nil {
 		allowedGroups = apiKey.User.AllowedGroups
+		if len(allowedGroups) == 0 && h.gatewayService != nil {
+			if ids, err := h.gatewayService.LoadUserAllowedGroupIDs(c.Request.Context(), apiKey.User.ID); err == nil {
+				allowedGroups = ids
+				apiKey.User.AllowedGroups = ids
+			}
+		}
 	}
 
 	groupIDs, err := h.gatewayService.GetAccessibleGroupIDs(c.Request.Context(), allowedGroups)
@@ -833,6 +839,12 @@ func (h *GatewayHandler) resolveEffectiveAPIKey(c *gin.Context, apiKey *service.
 	allowedGroups := []int64{}
 	if apiKey.User != nil {
 		allowedGroups = apiKey.User.AllowedGroups
+		if len(allowedGroups) == 0 && h.gatewayService != nil {
+			if ids, err := h.gatewayService.LoadUserAllowedGroupIDs(c.Request.Context(), apiKey.User.ID); err == nil {
+				allowedGroups = ids
+				apiKey.User.AllowedGroups = ids
+			}
+		}
 	}
 
 	group, err := h.gatewayService.ResolveGroupFromUserPermission(c.Request.Context(), allowedGroups, requestedModel)

@@ -75,6 +75,12 @@ func (h *OpenAIGatewayHandler) resolveEffectiveAPIKey(c *gin.Context, apiKey *se
 	allowedGroups := []int64{}
 	if apiKey.User != nil {
 		allowedGroups = apiKey.User.AllowedGroups
+		if len(allowedGroups) == 0 && h.claudeGatewayService != nil {
+			if ids, err := h.claudeGatewayService.LoadUserAllowedGroupIDs(c.Request.Context(), apiKey.User.ID); err == nil {
+				allowedGroups = ids
+				apiKey.User.AllowedGroups = ids
+			}
+		}
 	}
 
 	group, err := h.claudeGatewayService.ResolveGroupFromUserPermission(c.Request.Context(), allowedGroups, requestedModel)

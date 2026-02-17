@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -78,12 +79,14 @@ type LiteLLMRawEntry struct {
 
 // PricingService 动态价格服务
 type PricingService struct {
-	cfg          *config.Config
-	remoteClient PricingRemoteClient
-	mu           sync.RWMutex
-	pricingData  map[string]*LiteLLMModelPricing
-	lastUpdated  time.Time
-	localHash    string
+	cfg            *config.Config
+	remoteClient   PricingRemoteClient
+	mu             sync.RWMutex
+	pricingData    map[string]*LiteLLMModelPricing
+	tokenLimitData map[string]*LiteLLMModelPricing
+	fallbackData   map[string]*LiteLLMModelPricing
+	lastUpdated    time.Time
+	localHash      string
 
 	// 停止信号
 	stopCh chan struct{}
@@ -93,10 +96,12 @@ type PricingService struct {
 // NewPricingService 创建价格服务
 func NewPricingService(cfg *config.Config, remoteClient PricingRemoteClient) *PricingService {
 	s := &PricingService{
-		cfg:          cfg,
-		remoteClient: remoteClient,
-		pricingData:  make(map[string]*LiteLLMModelPricing),
-		stopCh:       make(chan struct{}),
+		cfg:            cfg,
+		remoteClient:   remoteClient,
+		pricingData:    make(map[string]*LiteLLMModelPricing),
+		tokenLimitData: make(map[string]*LiteLLMModelPricing),
+		fallbackData:   make(map[string]*LiteLLMModelPricing),
+		stopCh:         make(chan struct{}),
 	}
 	return s
 }
@@ -116,10 +121,152 @@ func (s *PricingService) Initialize() error {
 		}
 	}
 
+	if err := s.loadFallbackData(); err != nil {
+		log.Printf("[Pricing] Failed to load fallback token limits: %v", err)
+	}
+
 	// 启动定时更新
 	s.startUpdateScheduler()
 
 	log.Printf("[Pricing] Service initialized with %d models", len(s.pricingData))
+	return nil
+}
+
+func (s *PricingService) loadFallbackData() error {
+	if s == nil {
+		return errors.New("pricing service is nil")
+	}
+	if s.cfg == nil {
+		return errors.New("pricing config is nil")
+	}
+	fallbackFile := strings.TrimSpace(s.cfg.Pricing.FallbackFile)
+	if fallbackFile == "" {
+		return errors.New("fallback file is not configured")
+	}
+	data, err := os.ReadFile(fallbackFile)
+	if err != nil {
+		return fmt.Errorf("read fallback file failed: %w", err)
+	}
+	parsed, err := s.parseTokenLimitData(data)
+	if err != nil {
+		return fmt.Errorf("parse fallback file failed: %w", err)
+	}
+	s.mu.Lock()
+	s.fallbackData = parsed
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *PricingService) getFallbackPricingWithProvider(provider, model string) *LiteLLMModelPricing {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	model = strings.ToLower(strings.TrimSpace(model))
+	if model == "" {
+		return nil
+	}
+
+	s.mu.RLock()
+	data := s.fallbackData
+	s.mu.RUnlock()
+	if len(data) == 0 {
+		return nil
+	}
+
+	if provider != "" {
+		providers := []string{provider}
+		switch provider {
+		case "copilot":
+			providers = append(providers, "github_copilot")
+		}
+		for _, p := range providers {
+			if pricing, ok := data[p+"/"+model]; ok {
+				return pricing
+			}
+		}
+	}
+	if pricing, ok := data[model]; ok {
+		return pricing
+	}
+	if pricing := pickByModelSuffix(data, model); pricing != nil {
+		return pricing
+	}
+	return nil
+}
+
+func (s *PricingService) getTokenLimitWithProvider(provider, model string) *LiteLLMModelPricing {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	model = strings.ToLower(strings.TrimSpace(model))
+	if model == "" {
+		return nil
+	}
+
+	s.mu.RLock()
+	data := s.tokenLimitData
+	s.mu.RUnlock()
+	if len(data) == 0 {
+		return nil
+	}
+
+	if provider != "" {
+		providers := []string{provider}
+		switch provider {
+		case "copilot":
+			providers = append(providers, "github_copilot")
+		}
+		for _, p := range providers {
+			if pricing, ok := data[p+"/"+model]; ok {
+				return pricing
+			}
+		}
+	}
+	if pricing, ok := data[model]; ok {
+		return pricing
+	}
+	if pricing := pickByModelSuffix(data, model); pricing != nil {
+		return pricing
+	}
+	return nil
+}
+
+func pickByModelSuffix(data map[string]*LiteLLMModelPricing, model string) *LiteLLMModelPricing {
+	if len(data) == 0 {
+		return nil
+	}
+	model = strings.ToLower(strings.TrimSpace(model))
+	if model == "" {
+		return nil
+	}
+	suffix := "/" + model
+
+	var picked *LiteLLMModelPricing
+	minInput := 0
+	for key, pricing := range data {
+		if !strings.HasSuffix(strings.ToLower(key), suffix) {
+			continue
+		}
+		if pricing == nil {
+			continue
+		}
+		input := pricing.MaxInputTokens
+		if input <= 0 {
+			continue
+		}
+		if picked == nil || input < minInput {
+			picked = pricing
+			minInput = input
+		}
+	}
+	if picked != nil {
+		return picked
+	}
+	for key, pricing := range data {
+		if !strings.HasSuffix(strings.ToLower(key), suffix) {
+			continue
+		}
+		if pricing == nil {
+			continue
+		}
+		return pricing
+	}
 	return nil
 }
 
@@ -269,6 +416,10 @@ func (s *PricingService) downloadPricingData() error {
 	if err != nil {
 		return fmt.Errorf("parse pricing data: %w", err)
 	}
+	tokenLimits, err := s.parseTokenLimitData(body)
+	if err != nil {
+		return fmt.Errorf("parse token limit data: %w", err)
+	}
 
 	// 保存到本地文件
 	pricingFile := s.getPricingFilePath()
@@ -287,6 +438,7 @@ func (s *PricingService) downloadPricingData() error {
 	// 更新内存数据
 	s.mu.Lock()
 	s.pricingData = data
+	s.tokenLimitData = tokenLimits
 	s.lastUpdated = time.Now()
 	s.localHash = hashStr
 	s.mu.Unlock()
@@ -372,6 +524,53 @@ func (s *PricingService) parsePricingData(body []byte) (map[string]*LiteLLMModel
 	return result, nil
 }
 
+func (s *PricingService) parseTokenLimitData(body []byte) (map[string]*LiteLLMModelPricing, error) {
+	var rawData map[string]json.RawMessage
+	if err := json.Unmarshal(body, &rawData); err != nil {
+		return nil, fmt.Errorf("parse raw JSON: %w", err)
+	}
+
+	result := make(map[string]*LiteLLMModelPricing)
+	skipped := 0
+	for modelName, rawEntry := range rawData {
+		if modelName == "sample_spec" {
+			continue
+		}
+		var entry LiteLLMRawEntry
+		if err := json.Unmarshal(rawEntry, &entry); err != nil {
+			skipped++
+			continue
+		}
+		if entry.MaxInputTokens == nil && entry.MaxOutputTokens == nil && entry.MaxTokens == nil {
+			continue
+		}
+
+		pricing := &LiteLLMModelPricing{
+			LiteLLMProvider:       entry.LiteLLMProvider,
+			Mode:                  entry.Mode,
+			SupportsPromptCaching: entry.SupportsPromptCaching,
+			Source:                strings.TrimSpace(entry.Source),
+		}
+		if entry.MaxInputTokens != nil {
+			pricing.MaxInputTokens = *entry.MaxInputTokens
+		}
+		if entry.MaxOutputTokens != nil {
+			pricing.MaxOutputTokens = *entry.MaxOutputTokens
+		} else if entry.MaxTokens != nil {
+			pricing.MaxOutputTokens = *entry.MaxTokens
+		}
+		result[modelName] = pricing
+	}
+
+	if skipped > 0 {
+		log.Printf("[Pricing] Skipped %d invalid entries", skipped)
+	}
+	if len(result) == 0 {
+		return nil, fmt.Errorf("no valid token limit entries found")
+	}
+	return result, nil
+}
+
 // loadPricingData 从本地文件加载价格数据
 func (s *PricingService) loadPricingData(filePath string) error {
 	data, err := os.ReadFile(filePath)
@@ -384,6 +583,10 @@ func (s *PricingService) loadPricingData(filePath string) error {
 	if err != nil {
 		return fmt.Errorf("parse pricing data: %w", err)
 	}
+	tokenLimits, err := s.parseTokenLimitData(data)
+	if err != nil {
+		return fmt.Errorf("parse token limit data: %w", err)
+	}
 
 	// 计算哈希
 	hash := sha256.Sum256(data)
@@ -391,6 +594,7 @@ func (s *PricingService) loadPricingData(filePath string) error {
 
 	s.mu.Lock()
 	s.pricingData = pricingData
+	s.tokenLimitData = tokenLimits
 	s.localHash = hashStr
 
 	info, _ := os.Stat(filePath)
@@ -803,7 +1007,16 @@ func (s *PricingService) GetModelPricingWithProvider(provider, model string) *Li
 // GetModelInfo 获取模型完整信息（用于 Models API 响应）
 func (s *PricingService) GetModelInfo(provider, model string) *ModelInfo {
 	pricing := s.GetModelPricingWithProvider(provider, model)
-	if pricing == nil {
+	tokenLimits := s.getTokenLimitWithProvider(provider, model)
+	fallback := s.getFallbackPricingWithProvider(provider, model)
+	if tokenLimits == nil {
+		tokenLimits = pricing
+	}
+	if tokenLimits == nil {
+		tokenLimits = fallback
+		fallback = nil
+	}
+	if tokenLimits == nil && pricing == nil {
 		return nil
 	}
 
@@ -812,18 +1025,45 @@ func (s *PricingService) GetModelInfo(provider, model string) *ModelInfo {
 		id = provider + "/" + model
 	}
 
-	return &ModelInfo{
-		ID:               id,
-		Object:           "model",
-		Type:             "model",
-		DisplayName:      model,
-		ContextWindow:    pricing.MaxInputTokens,
-		MaxOutputTokens:  pricing.MaxOutputTokens,
-		InputPricePer1M:  pricing.InputCostPerToken * 1_000_000,
-		OutputPricePer1M: pricing.OutputCostPerToken * 1_000_000,
-		LiteLLMProvider:  pricing.LiteLLMProvider,
-		Source:           pricing.Source,
+	info := &ModelInfo{
+		ID:              id,
+		Object:          "model",
+		Type:            "model",
+		DisplayName:     model,
+		ContextWindow:   tokenLimits.MaxInputTokens,
+		MaxOutputTokens: tokenLimits.MaxOutputTokens,
 	}
+	if pricing != nil {
+		info.InputPricePer1M = pricing.InputCostPerToken * 1_000_000
+		info.OutputPricePer1M = pricing.OutputCostPerToken * 1_000_000
+		if strings.TrimSpace(info.Source) == "" && strings.TrimSpace(pricing.Source) != "" {
+			info.Source = pricing.Source
+		}
+		if strings.TrimSpace(info.LiteLLMProvider) == "" && strings.TrimSpace(pricing.LiteLLMProvider) != "" {
+			info.LiteLLMProvider = pricing.LiteLLMProvider
+		}
+	}
+	if strings.TrimSpace(info.Source) == "" && strings.TrimSpace(tokenLimits.Source) != "" {
+		info.Source = tokenLimits.Source
+	}
+	if strings.TrimSpace(info.LiteLLMProvider) == "" && strings.TrimSpace(tokenLimits.LiteLLMProvider) != "" {
+		info.LiteLLMProvider = tokenLimits.LiteLLMProvider
+	}
+	if fallback != nil {
+		if fallback.MaxInputTokens > 0 {
+			info.ContextWindow = fallback.MaxInputTokens
+		}
+		if fallback.MaxOutputTokens > 0 {
+			info.MaxOutputTokens = fallback.MaxOutputTokens
+		}
+		if strings.TrimSpace(info.Source) == "" && strings.TrimSpace(fallback.Source) != "" {
+			info.Source = fallback.Source
+		}
+		if strings.TrimSpace(info.LiteLLMProvider) == "" && strings.TrimSpace(fallback.LiteLLMProvider) != "" {
+			info.LiteLLMProvider = fallback.LiteLLMProvider
+		}
+	}
+	return info
 }
 
 // ListAllModelsWithProvider 列出所有模型，带 provider 前缀

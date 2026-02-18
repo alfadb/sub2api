@@ -773,12 +773,21 @@ func (h *GatewayHandler) buildModelListWithPricing(provider string, modelIDs []s
 				m.OwnedBy = nsID[:idx]
 			}
 		}
+		m.OwnedBy = strings.TrimSpace(m.OwnedBy)
 		if dm, ok := defaults[modelName]; ok {
 			m.DisplayName = dm.DisplayName
 		}
 
 		if h.pricingService != nil {
-			if info := h.pricingService.GetModelInfo(modelProvider, modelName); info != nil {
+			pricingProvider := strings.TrimSpace(modelProvider)
+			pricingModel := strings.TrimSpace(modelName)
+			if pricingProvider == "" {
+				if idx := strings.Index(nsID, "/"); idx > 0 {
+					pricingProvider = strings.TrimSpace(nsID[:idx])
+					pricingModel = strings.TrimSpace(nsID[idx+1:])
+				}
+			}
+			if info := h.pricingService.GetModelInfo(pricingProvider, pricingModel); info != nil {
 				m.ContextWindow = info.ContextWindow
 				m.MaxOutputTokens = info.MaxOutputTokens
 				m.Source = info.Source

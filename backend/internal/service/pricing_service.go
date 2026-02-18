@@ -18,6 +18,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
+	modelpricing "github.com/Wei-Shaw/sub2api/resources/model-pricing"
 )
 
 var (
@@ -140,12 +141,23 @@ func (s *PricingService) loadFallbackData() error {
 		return errors.New("pricing config is nil")
 	}
 	fallbackFile := strings.TrimSpace(s.cfg.Pricing.FallbackFile)
-	if fallbackFile == "" {
-		return errors.New("fallback file is not configured")
+	data := []byte(nil)
+	if fallbackFile != "" {
+		read, err := os.ReadFile(fallbackFile)
+		if err != nil {
+			log.Printf("[Pricing] Fallback file read failed, using embedded data: %v", err)
+		} else {
+			data = read
+		}
 	}
-	data, err := os.ReadFile(fallbackFile)
-	if err != nil {
-		return fmt.Errorf("read fallback file failed: %w", err)
+	if len(data) == 0 {
+		data = modelpricing.EmbeddedModelPricesAndContextWindow
+		if len(data) == 0 {
+			if fallbackFile == "" {
+				return errors.New("fallback file is not configured")
+			}
+			return fmt.Errorf("read fallback file failed: embedded fallback data is empty")
+		}
 	}
 	parsed, err := s.parseTokenLimitData(data)
 	if err != nil {
@@ -159,8 +171,8 @@ func (s *PricingService) loadFallbackData() error {
 
 func (s *PricingService) getFallbackPricingWithProvider(provider, model string) *LiteLLMModelPricing {
 	provider = strings.ToLower(strings.TrimSpace(provider))
-	model = strings.ToLower(strings.TrimSpace(model))
-	if model == "" {
+	modelLower := strings.ToLower(strings.TrimSpace(model))
+	if modelLower == "" {
 		return nil
 	}
 
@@ -171,31 +183,42 @@ func (s *PricingService) getFallbackPricingWithProvider(provider, model string) 
 		return nil
 	}
 
+	candidates := tokenLimitLookupCandidates(modelLower)
 	if provider != "" {
 		providers := []string{provider}
 		switch provider {
 		case "copilot":
 			providers = append(providers, "github_copilot")
 		}
-		for _, p := range providers {
-			if pricing, ok := data[p+"/"+model]; ok {
+		for _, candidate := range candidates {
+			for _, p := range providers {
+				if pricing, ok := data[p+"/"+candidate]; ok {
+					return pricing
+				}
+			}
+			if pricing, ok := data[candidate]; ok {
+				return pricing
+			}
+		}
+	} else {
+		for _, candidate := range candidates {
+			if pricing, ok := data[candidate]; ok {
 				return pricing
 			}
 		}
 	}
-	if pricing, ok := data[model]; ok {
-		return pricing
-	}
-	if pricing := pickByModelSuffix(data, model); pricing != nil {
-		return pricing
+	for _, candidate := range candidates {
+		if pricing := pickByModelSuffix(data, candidate); pricing != nil {
+			return pricing
+		}
 	}
 	return nil
 }
 
 func (s *PricingService) getTokenLimitWithProvider(provider, model string) *LiteLLMModelPricing {
 	provider = strings.ToLower(strings.TrimSpace(provider))
-	model = strings.ToLower(strings.TrimSpace(model))
-	if model == "" {
+	modelLower := strings.ToLower(strings.TrimSpace(model))
+	if modelLower == "" {
 		return nil
 	}
 
@@ -206,25 +229,81 @@ func (s *PricingService) getTokenLimitWithProvider(provider, model string) *Lite
 		return nil
 	}
 
+	candidates := tokenLimitLookupCandidates(modelLower)
 	if provider != "" {
 		providers := []string{provider}
 		switch provider {
 		case "copilot":
 			providers = append(providers, "github_copilot")
 		}
-		for _, p := range providers {
-			if pricing, ok := data[p+"/"+model]; ok {
+		for _, candidate := range candidates {
+			for _, p := range providers {
+				if pricing, ok := data[p+"/"+candidate]; ok {
+					return pricing
+				}
+			}
+			if pricing, ok := data[candidate]; ok {
+				return pricing
+			}
+		}
+	} else {
+		for _, candidate := range candidates {
+			if pricing, ok := data[candidate]; ok {
 				return pricing
 			}
 		}
 	}
-	if pricing, ok := data[model]; ok {
-		return pricing
-	}
-	if pricing := pickByModelSuffix(data, model); pricing != nil {
-		return pricing
+	for _, candidate := range candidates {
+		if pricing := pickByModelSuffix(data, candidate); pricing != nil {
+			return pricing
+		}
 	}
 	return nil
+}
+
+func tokenLimitLookupCandidates(modelLower string) []string {
+	base := strings.ToLower(strings.TrimSpace(modelLower))
+	if base == "" {
+		return nil
+	}
+	seen := make(map[string]struct{}, 8)
+	out := make([]string, 0, 8)
+	add := func(s string) {
+		s = strings.ToLower(strings.TrimSpace(s))
+		if s == "" {
+			return
+		}
+		if _, ok := seen[s]; ok {
+			return
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+
+	add(base)
+	add(normalizeModelNameForPricing(base))
+	add(strings.TrimPrefix(base, "models/"))
+	add(lastSegment(base))
+	add(lastSegment(strings.TrimPrefix(base, "models/")))
+
+	if strings.Contains(base, "claude-") {
+		add(strings.NewReplacer(
+			"-4.6", "-4-6",
+			"-4.5", "-4-5",
+			"-4.1", "-4-1",
+			"-3.5", "-3-5",
+		).Replace(base))
+		add(strings.NewReplacer(
+			"-4-6", "-4.6",
+			"-4-5", "-4.5",
+			"-4-1", "-4.1",
+			"-3-5", "-3.5",
+		).Replace(base))
+		add(strings.ReplaceAll(base, "-41", "-4-1"))
+		add(strings.ReplaceAll(base, "-4-1", "-41"))
+	}
+
+	return out
 }
 
 func pickByModelSuffix(data map[string]*LiteLLMModelPricing, model string) *LiteLLMModelPricing {
@@ -1017,7 +1096,11 @@ func (s *PricingService) GetModelInfo(provider, model string) *ModelInfo {
 		fallback = nil
 	}
 	if tokenLimits == nil && pricing == nil {
-		return nil
+		if def := defaultTokenLimitsForProviderModel(provider, model); def != nil {
+			tokenLimits = def
+		} else {
+			return nil
+		}
 	}
 
 	id := model
@@ -1064,6 +1147,21 @@ func (s *PricingService) GetModelInfo(provider, model string) *ModelInfo {
 		}
 	}
 	return info
+}
+
+func defaultTokenLimitsForProviderModel(provider, model string) *LiteLLMModelPricing {
+	p := strings.ToLower(strings.TrimSpace(provider))
+	m := strings.ToLower(strings.TrimSpace(model))
+	if p == "" || m == "" {
+		return nil
+	}
+	if p == "copilot" || p == "github_copilot" {
+		switch m {
+		case "oswe-vscode-prime", "oswe-vscode-secondary":
+			return &LiteLLMModelPricing{LiteLLMProvider: "github_copilot", Mode: "chat", MaxInputTokens: 128000, MaxOutputTokens: 16384}
+		}
+	}
+	return nil
 }
 
 // ListAllModelsWithProvider 列出所有模型，带 provider 前缀

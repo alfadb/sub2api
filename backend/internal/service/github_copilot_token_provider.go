@@ -162,7 +162,22 @@ func (p *GitHubCopilotTokenProvider) ListModels(ctx context.Context, account *Ac
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, githubCopilotTokenMaxBodyLen))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		msg := strings.TrimSpace(ExtractUpstreamErrorMessage(body))
+		msg := ""
+		var parsed struct {
+			Message      string `json:"message"`
+			ErrorDetails struct {
+				Message string `json:"message"`
+			} `json:"error_details"`
+		}
+		if err := json.Unmarshal(body, &parsed); err == nil {
+			msg = strings.TrimSpace(parsed.ErrorDetails.Message)
+			if msg == "" {
+				msg = strings.TrimSpace(parsed.Message)
+			}
+		}
+		if msg == "" {
+			msg = strings.TrimSpace(ExtractUpstreamErrorMessage(body))
+		}
 		msg = sanitizeUpstreamErrorMessage(msg)
 		if msg == "" {
 			msg = strings.TrimSpace(string(body))
@@ -258,7 +273,22 @@ func (p *GitHubCopilotTokenProvider) exchangeCopilotTokenWithTTL(ctx context.Con
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, githubCopilotTokenMaxBodyLen))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		msg := strings.TrimSpace(ExtractUpstreamErrorMessage(body))
+		msg := ""
+		var parsed struct {
+			Message      string `json:"message"`
+			ErrorDetails struct {
+				Message string `json:"message"`
+			} `json:"error_details"`
+		}
+		if err := json.Unmarshal(body, &parsed); err == nil {
+			msg = strings.TrimSpace(parsed.ErrorDetails.Message)
+			if msg == "" {
+				msg = strings.TrimSpace(parsed.Message)
+			}
+		}
+		if msg == "" {
+			msg = strings.TrimSpace(ExtractUpstreamErrorMessage(body))
+		}
 		msg = sanitizeUpstreamErrorMessage(msg)
 		if msg == "" {
 			msg = strings.TrimSpace(string(body))

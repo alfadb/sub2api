@@ -216,9 +216,13 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 		}
 	} else if account.Type == "apikey" {
 		isGitHubCopilot := isGitHubCopilotAccount(account)
+		copilotProvider := s.githubCopilotTokenProvider
+		if copilotProvider == nil && s.httpUpstream != nil {
+			copilotProvider = NewGitHubCopilotTokenProvider(nil, s.httpUpstream)
+		}
 		var copilotTokenErr error
-		if isGitHubCopilot && s.githubCopilotTokenProvider != nil {
-			token, err := s.githubCopilotTokenProvider.GetAccessToken(ctx, account)
+		if isGitHubCopilot && copilotProvider != nil {
+			token, err := copilotProvider.GetAccessToken(ctx, account)
 			if err != nil {
 				copilotTokenErr = err
 			} else if strings.TrimSpace(token) != "" {
@@ -366,9 +370,13 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	} else if account.Type == "apikey" {
 		// API Key - use Platform API
 		isGitHubCopilot = isGitHubCopilotAccount(account)
+		copilotProvider := s.githubCopilotTokenProvider
+		if copilotProvider == nil && s.httpUpstream != nil {
+			copilotProvider = NewGitHubCopilotTokenProvider(nil, s.httpUpstream)
+		}
 		var copilotTokenErr error
-		if isGitHubCopilot && s.githubCopilotTokenProvider != nil {
-			token, err := s.githubCopilotTokenProvider.GetAccessToken(ctx, account)
+		if isGitHubCopilot && copilotProvider != nil {
+			token, err := copilotProvider.GetAccessToken(ctx, account)
 			if err != nil {
 				copilotTokenErr = err
 			} else if strings.TrimSpace(token) != "" {

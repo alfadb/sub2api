@@ -868,13 +868,52 @@
           />
           <p class="input-hint">{{ baseUrlHint }}</p>
         </div>
+        <!-- Copilot Auth Mode -->
+        <div v-if="form.platform === 'copilot'">
+          <label class="input-label">{{ t('admin.accounts.copilotAuth.modeLabel') }}</label>
+          <div class="mt-2 grid grid-cols-2 gap-1 rounded-lg bg-gray-100 p-1 dark:bg-dark-700">
+            <button
+              type="button"
+              @click="copilotAuthMode = 'device'"
+              :class="[
+                'rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                copilotAuthMode === 'device'
+                  ? 'bg-white text-gray-900 shadow-sm dark:bg-dark-800 dark:text-white'
+                  : 'text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white'
+              ]"
+            >
+              {{ t('admin.accounts.copilotAuth.deviceAuth') }}
+            </button>
+            <button
+              type="button"
+              @click="copilotAuthMode = 'api-key'"
+              :class="[
+                'rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                copilotAuthMode === 'api-key'
+                  ? 'bg-white text-gray-900 shadow-sm dark:bg-dark-800 dark:text-white'
+                  : 'text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white'
+              ]"
+            >
+              {{ t('admin.accounts.copilotAuth.apiKey') }}
+            </button>
+          </div>
+          <p class="input-hint">
+            {{
+              copilotAuthMode === 'device'
+                ? t('admin.accounts.copilotAuth.deviceHint')
+                : t('admin.accounts.copilotAuth.apiKeyHint')
+            }}
+          </p>
+        </div>
+
         <div>
-          <label class="input-label">{{ t('admin.accounts.apiKeyRequired') }}</label>
+          <label class="input-label">{{ apiKeyLabel }}</label>
           <input
             v-model="apiKeyValue"
             type="password"
-            required
+            :required="form.platform !== 'copilot' || copilotAuthMode === 'api-key'"
             class="input font-mono"
+            :disabled="form.platform === 'copilot' && copilotAuthMode === 'device'"
             :placeholder="
               form.platform === 'openai'
                 ? 'sk-proj-...'
@@ -885,7 +924,7 @@
                     : 'sk-ant-...'
             "
           />
-          <p class="input-hint">{{ apiKeyHint }}</p>
+          <p v-if="form.platform !== 'copilot'" class="input-hint">{{ apiKeyHint }}</p>
         </div>
 
         <!-- Gemini API Key tier selection -->
@@ -2071,7 +2110,7 @@ import {
 import { useOpenAIOAuth } from '@/composables/useOpenAIOAuth'
 import { useGeminiOAuth } from '@/composables/useGeminiOAuth'
 import { useAntigravityOAuth } from '@/composables/useAntigravityOAuth'
-import type { Proxy, AdminGroup, AccountPlatform, AccountType } from '@/types'
+import type { Proxy, AdminGroup, Account, AccountPlatform, AccountType } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
@@ -2114,10 +2153,22 @@ const baseUrlHint = computed(() => {
 
 const apiKeyHint = computed(() => {
   if (form.platform === 'openai') return t('admin.accounts.openai.apiKeyHint')
-  if (form.platform === 'copilot') return ''
+  if (form.platform === 'copilot') {
+    if (copilotAuthMode.value === 'device') return t('admin.accounts.copilotAuth.deviceHint')
+    return t('admin.accounts.copilotAuth.apiKeyHint')
+  }
   if (form.platform === 'aggregator') return ''
   if (form.platform === 'gemini') return t('admin.accounts.gemini.apiKeyHint')
   return t('admin.accounts.apiKeyHint')
+})
+
+const apiKeyLabel = computed(() => {
+  if (form.platform === 'copilot') {
+    return copilotAuthMode.value === 'device'
+      ? t('admin.accounts.copilotAuth.noKeyRequired')
+      : t('admin.accounts.copilotAuth.githubTokenLabel')
+  }
+  return t('admin.accounts.apiKeyRequired')
 })
 
 interface Props {
@@ -2129,7 +2180,8 @@ interface Props {
 const props = defineProps<Props>()
 const emit = defineEmits<{
   close: []
-  created: []
+  created: [account?: Account]
+  'device-auth-request': [account: Account]
 }>()
 
 const appStore = useAppStore()
@@ -2192,6 +2244,7 @@ const accountCategory = ref<'oauth-based' | 'apikey'>('oauth-based') // UI selec
 const addMethod = ref<AddMethod>('oauth') // For oauth-based: 'oauth' or 'setup-token'
 const apiKeyBaseUrl = ref('https://api.anthropic.com')
 const apiKeyValue = ref('')
+const copilotAuthMode = ref<'device' | 'api-key'>('device')
 const modelMappings = ref<ModelMapping[]>([])
 const modelRestrictionMode = ref<'whitelist' | 'mapping'>('whitelist')
 const allowedModels = ref<string[]>([])
@@ -2717,9 +2770,12 @@ const handleClose = () => {
 const doCreateAccount = async (payload: any) => {
   submitting.value = true
   try {
-    await adminAPI.accounts.create(payload)
+    const created = await adminAPI.accounts.create(payload)
     appStore.showSuccess(t('admin.accounts.accountCreated'))
-    emit('created')
+    emit('created', created)
+    if (created?.platform === 'copilot' && copilotAuthMode.value === 'device') {
+      emit('device-auth-request', created)
+    }
     handleClose()
   } catch (error: any) {
     // Handle 409 mixed_channel_warning - show confirmation dialog
@@ -2747,9 +2803,12 @@ const handleMixedChannelConfirm = async () => {
     pendingCreatePayload.value.confirm_mixed_channel_risk = true
     submitting.value = true
     try {
-      await adminAPI.accounts.create(pendingCreatePayload.value)
+      const created = await adminAPI.accounts.create(pendingCreatePayload.value)
       appStore.showSuccess(t('admin.accounts.accountCreated'))
-      emit('created')
+      emit('created', created)
+      if (created?.platform === 'copilot' && copilotAuthMode.value === 'device') {
+        emit('device-auth-request', created)
+      }
       handleClose()
     } catch (error: any) {
       appStore.showError(error.response?.data?.detail || t('admin.accounts.failedToCreate'))
@@ -2821,9 +2880,15 @@ const handleSubmit = async () => {
   }
 
   // For apikey type, create directly
-  if (!apiKeyValue.value.trim()) {
-    appStore.showError(t('admin.accounts.pleaseEnterApiKey'))
-    return
+  if (form.platform !== 'copilot' || copilotAuthMode.value === 'api-key') {
+    if (!apiKeyValue.value.trim()) {
+      appStore.showError(
+        form.platform === 'copilot'
+          ? t('admin.accounts.pleaseEnterGitHubToken')
+          : t('admin.accounts.pleaseEnterApiKey')
+      )
+      return
+    }
   }
 
   if (form.platform === 'aggregator' && !apiKeyBaseUrl.value.trim()) {
@@ -2845,10 +2910,14 @@ const handleSubmit = async () => {
 
   // Build credentials with optional model mapping
   const credentials: Record<string, unknown> = {
-    base_url: apiKeyBaseUrl.value.trim() || defaultBaseUrl,
-    ...(form.platform === 'copilot'
-      ? { github_token: apiKeyValue.value.trim() }
-      : { api_key: apiKeyValue.value.trim() })
+    base_url: apiKeyBaseUrl.value.trim() || defaultBaseUrl
+  }
+  if (form.platform === 'copilot') {
+    if (copilotAuthMode.value === 'api-key') {
+      credentials.github_token = apiKeyValue.value.trim()
+    }
+  } else {
+    credentials.api_key = apiKeyValue.value.trim()
   }
   if (form.platform === 'gemini') {
     credentials.tier_id = geminiTierAIStudio.value
@@ -2932,7 +3001,7 @@ const createAccountAndFinish = async (
   if (!applyTempUnschedConfig(credentials)) {
     return
   }
-  await adminAPI.accounts.create({
+  const created = await adminAPI.accounts.create({
     name: form.name,
     notes: form.notes,
     platform,
@@ -2948,7 +3017,10 @@ const createAccountAndFinish = async (
     auto_pause_on_expired: autoPauseOnExpired.value
   })
   appStore.showSuccess(t('admin.accounts.accountCreated'))
-  emit('created')
+  emit('created', created)
+  if (created?.platform === 'copilot' && copilotAuthMode.value === 'device') {
+    emit('device-auth-request', created)
+  }
   handleClose()
 }
 

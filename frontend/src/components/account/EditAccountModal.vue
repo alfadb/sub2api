@@ -1665,9 +1665,12 @@ const handleSubmit = async () => {
         // Preserve existing
         newCredentials[tokenField] = currentCredentials[tokenField]
       } else {
-        appStore.showError(t('admin.accounts.apiKeyIsRequired'))
-        submitting.value = false
-        return
+        // Copilot accounts can be created without a token and later authorized via Device Auth.
+        if (props.account.platform !== 'copilot') {
+          appStore.showError(t('admin.accounts.apiKeyIsRequired'))
+          submitting.value = false
+          return
+        }
       }
 
       // Add model mapping if configured

@@ -24,6 +24,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 	"github.com/cespare/xxhash/v2"
@@ -5516,6 +5517,8 @@ func (s *GatewayService) collectModelsFromAccounts(accounts []Account, platform 
 
 	for _, acc := range accounts {
 		provider := inferProviderFromAccount(&acc)
+
+		// Copilot 账户：使用 available_models（从 API 动态获取并缓存）
 		if isGitHubCopilotAccount(&acc) {
 			if ids := acc.GetAvailableModels(); len(ids) > 0 {
 				hasAnyModels = true
@@ -5529,6 +5532,7 @@ func (s *GatewayService) collectModelsFromAccounts(accounts []Account, platform 
 			}
 		}
 
+		// 尝试从 model_mapping 获取模型列表
 		mapping := acc.GetModelMapping()
 		if len(mapping) > 0 {
 			hasAnyModels = true
@@ -5536,6 +5540,19 @@ func (s *GatewayService) collectModelsFromAccounts(accounts []Account, platform 
 				nsModel := namespacedModel(provider, model)
 				if nsModel != "" {
 					modelSet[nsModel] = struct{}{}
+				}
+			}
+			continue
+		}
+
+		// OpenAI/Aggregator 平台：未配置 model_mapping 时使用默认模型列表
+		// 这确保用户能看到完整的可用模型，而不是返回空列表
+		if acc.Platform == PlatformOpenAI || acc.Platform == PlatformCopilot || acc.Platform == PlatformAggregator {
+			hasAnyModels = true
+			for _, id := range openai.DefaultModelIDs() {
+				nsID := namespacedModel(provider, id)
+				if nsID != "" {
+					modelSet[nsID] = struct{}{}
 				}
 			}
 		}

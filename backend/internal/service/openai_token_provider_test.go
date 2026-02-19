@@ -147,7 +147,7 @@ func TestOpenAITokenProvider_CacheHit(t *testing.T) {
 	cacheKey := OpenAITokenCacheKey(account)
 	cache.tokens[cacheKey] = "cached-token"
 
-	provider := NewOpenAITokenProvider(nil, cache, nil)
+	provider := NewOpenAITokenProvider(nil, cache, nil, nil)
 
 	token, err := provider.GetAccessToken(context.Background(), account)
 	require.NoError(t, err)
@@ -170,7 +170,7 @@ func TestOpenAITokenProvider_CacheMiss_FromCredentials(t *testing.T) {
 		},
 	}
 
-	provider := NewOpenAITokenProvider(nil, cache, nil)
+	provider := NewOpenAITokenProvider(nil, cache, nil, nil)
 
 	token, err := provider.GetAccessToken(context.Background(), account)
 	require.NoError(t, err)
@@ -357,7 +357,7 @@ func TestOpenAITokenProvider_LockRaceCondition(t *testing.T) {
 }
 
 func TestOpenAITokenProvider_NilAccount(t *testing.T) {
-	provider := NewOpenAITokenProvider(nil, nil, nil)
+	provider := NewOpenAITokenProvider(nil, nil, nil, nil)
 
 	token, err := provider.GetAccessToken(context.Background(), nil)
 	require.Error(t, err)
@@ -366,7 +366,7 @@ func TestOpenAITokenProvider_NilAccount(t *testing.T) {
 }
 
 func TestOpenAITokenProvider_WrongPlatform(t *testing.T) {
-	provider := NewOpenAITokenProvider(nil, nil, nil)
+	provider := NewOpenAITokenProvider(nil, nil, nil, nil)
 	account := &Account{
 		ID:       104,
 		Platform: PlatformGemini,
@@ -380,7 +380,7 @@ func TestOpenAITokenProvider_WrongPlatform(t *testing.T) {
 }
 
 func TestOpenAITokenProvider_WrongAccountType(t *testing.T) {
-	provider := NewOpenAITokenProvider(nil, nil, nil)
+	provider := NewOpenAITokenProvider(nil, nil, nil, nil)
 	account := &Account{
 		ID:       105,
 		Platform: PlatformOpenAI,
@@ -406,7 +406,7 @@ func TestOpenAITokenProvider_NilCache(t *testing.T) {
 		},
 	}
 
-	provider := NewOpenAITokenProvider(nil, nil, nil)
+	provider := NewOpenAITokenProvider(nil, nil, nil, nil)
 
 	token, err := provider.GetAccessToken(context.Background(), account)
 	require.NoError(t, err)
@@ -429,7 +429,7 @@ func TestOpenAITokenProvider_CacheGetError(t *testing.T) {
 		},
 	}
 
-	provider := NewOpenAITokenProvider(nil, cache, nil)
+	provider := NewOpenAITokenProvider(nil, cache, nil, nil)
 
 	// Should gracefully degrade and return from credentials
 	token, err := provider.GetAccessToken(context.Background(), account)
@@ -452,7 +452,7 @@ func TestOpenAITokenProvider_CacheSetError(t *testing.T) {
 		},
 	}
 
-	provider := NewOpenAITokenProvider(nil, cache, nil)
+	provider := NewOpenAITokenProvider(nil, cache, nil, nil)
 
 	// Should still work even if cache set fails
 	token, err := provider.GetAccessToken(context.Background(), account)
@@ -473,7 +473,7 @@ func TestOpenAITokenProvider_MissingAccessToken(t *testing.T) {
 		},
 	}
 
-	provider := NewOpenAITokenProvider(nil, cache, nil)
+	provider := NewOpenAITokenProvider(nil, cache, nil, nil)
 
 	token, err := provider.GetAccessToken(context.Background(), account)
 	require.Error(t, err)
@@ -576,7 +576,7 @@ func TestOpenAITokenProvider_TTLCalculation(t *testing.T) {
 				},
 			}
 
-			provider := NewOpenAITokenProvider(nil, cache, nil)
+			provider := NewOpenAITokenProvider(nil, cache, nil, nil)
 
 			_, err := provider.GetAccessToken(context.Background(), account)
 			require.NoError(t, err)
@@ -664,7 +664,7 @@ func TestOpenAITokenProvider_Real_LockFailedWait(t *testing.T) {
 		cache.mu.Unlock()
 	}()
 
-	provider := NewOpenAITokenProvider(nil, cache, nil)
+	provider := NewOpenAITokenProvider(nil, cache, nil, nil)
 	token, err := provider.GetAccessToken(context.Background(), account)
 	require.NoError(t, err)
 	// Should get either the fallback token or the refreshed one
@@ -696,7 +696,7 @@ func TestOpenAITokenProvider_Real_CacheHitAfterWait(t *testing.T) {
 		cache.mu.Unlock()
 	}()
 
-	provider := NewOpenAITokenProvider(nil, cache, nil)
+	provider := NewOpenAITokenProvider(nil, cache, nil, nil)
 	token, err := provider.GetAccessToken(context.Background(), account)
 	require.NoError(t, err)
 	require.NotEmpty(t, token)
@@ -716,7 +716,7 @@ func TestOpenAITokenProvider_Real_ExpiredWithoutRefreshToken(t *testing.T) {
 		},
 	}
 
-	provider := NewOpenAITokenProvider(nil, cache, nil)
+	provider := NewOpenAITokenProvider(nil, cache, nil, nil)
 	token, err := provider.GetAccessToken(context.Background(), account)
 	// Without OAuth service, refresh will fail but token should be returned from credentials
 	require.NoError(t, err)
@@ -739,7 +739,7 @@ func TestOpenAITokenProvider_Real_WhitespaceToken(t *testing.T) {
 		},
 	}
 
-	provider := NewOpenAITokenProvider(nil, cache, nil)
+	provider := NewOpenAITokenProvider(nil, cache, nil, nil)
 	token, err := provider.GetAccessToken(context.Background(), account)
 	require.NoError(t, err)
 	require.Equal(t, "real-token", token) // Should fall back to credentials
@@ -761,7 +761,7 @@ func TestOpenAITokenProvider_Real_LockError(t *testing.T) {
 		},
 	}
 
-	provider := NewOpenAITokenProvider(nil, cache, nil)
+	provider := NewOpenAITokenProvider(nil, cache, nil, nil)
 	token, err := provider.GetAccessToken(context.Background(), account)
 	require.NoError(t, err)
 	require.Equal(t, "fallback-on-lock-error", token)
@@ -781,7 +781,7 @@ func TestOpenAITokenProvider_Real_WhitespaceCredentialToken(t *testing.T) {
 		},
 	}
 
-	provider := NewOpenAITokenProvider(nil, cache, nil)
+	provider := NewOpenAITokenProvider(nil, cache, nil, nil)
 	token, err := provider.GetAccessToken(context.Background(), account)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "access_token not found")
@@ -802,7 +802,7 @@ func TestOpenAITokenProvider_Real_NilCredentials(t *testing.T) {
 		},
 	}
 
-	provider := NewOpenAITokenProvider(nil, cache, nil)
+	provider := NewOpenAITokenProvider(nil, cache, nil, nil)
 	token, err := provider.GetAccessToken(context.Background(), account)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "access_token not found")

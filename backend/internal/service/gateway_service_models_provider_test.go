@@ -41,3 +41,54 @@ func TestGatewayService_CollectModelsFromAccounts_ProviderNamespaced(t *testing.
 	require.Contains(t, got, "azure/gpt-5.2")
 	require.Contains(t, got, "copilot/gpt-5.2")
 }
+
+func TestGatewayService_CollectModelsFromAccounts_OpenAIDefaultModels(t *testing.T) {
+	svc := &GatewayService{}
+
+	accounts := []Account{
+		{
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Credentials: map[string]any{"base_url": "https://api.openai.com"},
+		},
+		{
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeOAuth,
+			Credentials: map[string]any{},
+		},
+		{
+			Platform:    PlatformAggregator,
+			Type:        AccountTypeAPIKey,
+			Credentials: map[string]any{},
+		},
+	}
+
+	got := svc.collectModelsFromAccounts(accounts, "")
+	require.NotEmpty(t, got, "should return default models for OpenAI accounts without model_mapping")
+	require.Contains(t, got, "openai/gpt-5.1-codex", "should contain default OpenAI model")
+	require.Contains(t, got, "openai/gpt-5.2", "should contain default OpenAI model")
+	require.Contains(t, got, "aggregator/gpt-5.1-codex", "should contain default model with aggregator prefix")
+}
+
+func TestGatewayService_CollectModelsFromAccounts_MixedMapping(t *testing.T) {
+	svc := &GatewayService{}
+
+	accounts := []Account{
+		{
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeAPIKey,
+			Credentials: map[string]any{
+				"model_mapping": map[string]any{"gpt-4o": "gpt-4o"},
+			},
+		},
+		{
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Credentials: map[string]any{},
+		},
+	}
+
+	got := svc.collectModelsFromAccounts(accounts, "")
+	require.Contains(t, got, "openai/gpt-4o", "should contain model from mapping")
+	require.Contains(t, got, "openai/gpt-5.1-codex", "should contain default model for account without mapping")
+}

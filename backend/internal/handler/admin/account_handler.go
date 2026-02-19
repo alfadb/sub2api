@@ -45,6 +45,7 @@ type AccountHandler struct {
 	accountTestService      *service.AccountTestService
 	githubDeviceAuthService *service.GitHubDeviceAuthService
 	githubCopilotToken      *service.GitHubCopilotTokenProvider
+	openAITokenProvider     *service.OpenAITokenProvider
 	concurrencyService      *service.ConcurrencyService
 	crsSyncService          *service.CRSSyncService
 	sessionLimitCache       service.SessionLimitCache
@@ -65,6 +66,7 @@ func NewAccountHandler(
 	crsSyncService *service.CRSSyncService,
 	githubDeviceAuthService *service.GitHubDeviceAuthService,
 	githubCopilotTokenProvider *service.GitHubCopilotTokenProvider,
+	openAITokenProvider *service.OpenAITokenProvider,
 	sessionLimitCache service.SessionLimitCache,
 	tokenCacheInvalidator service.TokenCacheInvalidator,
 ) *AccountHandler {
@@ -79,6 +81,7 @@ func NewAccountHandler(
 		accountTestService:      accountTestService,
 		githubDeviceAuthService: githubDeviceAuthService,
 		githubCopilotToken:      githubCopilotTokenProvider,
+		openAITokenProvider:     openAITokenProvider,
 		concurrencyService:      concurrencyService,
 		crsSyncService:          crsSyncService,
 		sessionLimitCache:       sessionLimitCache,
@@ -1643,10 +1646,6 @@ func (h *AccountHandler) RefreshAvailableModels(c *gin.Context) {
 		response.BadRequest(c, "Invalid account ID")
 		return
 	}
-	if h.githubCopilotToken == nil {
-		response.InternalError(c, "GitHub Copilot token provider not configured")
-		return
-	}
 
 	account, err := h.adminService.GetAccount(c.Request.Context(), accountID)
 	if err != nil {
@@ -1657,16 +1656,43 @@ func (h *AccountHandler) RefreshAvailableModels(c *gin.Context) {
 		response.BadRequest(c, "Account not found")
 		return
 	}
-	if account.Platform != service.PlatformCopilot && !service.IsGitHubCopilotAccount(account) {
-		response.BadRequest(c, "Only GitHub Copilot accounts support model refresh")
+
+	var models []openai.Model
+	var source string
+	var prefix string
+
+	switch {
+	case account.Platform == service.PlatformCopilot || service.IsGitHubCopilotAccount(account):
+		if h.githubCopilotToken == nil {
+			response.InternalError(c, "GitHub Copilot token provider not configured")
+			return
+		}
+		models, err = h.githubCopilotToken.ListModels(c.Request.Context(), account)
+		if err != nil {
+			response.InternalError(c, "Refresh models failed: "+err.Error())
+			return
+		}
+		source = "github_copilot"
+		prefix = service.PlatformCopilot + "/"
+
+	case account.Platform == service.PlatformOpenAI:
+		if h.openAITokenProvider == nil {
+			response.InternalError(c, "OpenAI token provider not configured")
+			return
+		}
+		models, err = h.openAITokenProvider.ListModels(c.Request.Context(), account)
+		if err != nil {
+			response.InternalError(c, "Refresh models failed: "+err.Error())
+			return
+		}
+		source = "openai"
+		prefix = service.PlatformOpenAI + "/"
+
+	default:
+		response.BadRequest(c, "Only GitHub Copilot and OpenAI accounts support model refresh")
 		return
 	}
 
-	models, err := h.githubCopilotToken.ListModels(c.Request.Context(), account)
-	if err != nil {
-		response.InternalError(c, "Refresh models failed: "+err.Error())
-		return
-	}
 	ids := make([]string, 0, len(models))
 	for _, m := range models {
 		if v := strings.TrimSpace(m.ID); v != "" {
@@ -1681,11 +1707,10 @@ func (h *AccountHandler) RefreshAvailableModels(c *gin.Context) {
 		}
 		newExtra[service.AccountExtraKeyAvailableModels] = ids
 		newExtra[service.AccountExtraKeyAvailableModelsUpdatedAt] = now
-		newExtra[service.AccountExtraKeyAvailableModelsSource] = "github_copilot"
+		newExtra[service.AccountExtraKeyAvailableModelsSource] = source
 		_, _ = h.adminService.UpdateAccount(c.Request.Context(), accountID, &service.UpdateAccountInput{Extra: newExtra})
 	}
 
-	prefix := service.PlatformCopilot + "/"
 	out := make([]openai.Model, 0, len(models))
 	for _, m := range models {
 		mm := m

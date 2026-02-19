@@ -2,16 +2,25 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
+	"sort"
 	"strings"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 )
 
 const (
 	openAITokenRefreshSkew = 3 * time.Minute
 	openAITokenCacheSkew   = 5 * time.Minute
 	openAILockWaitTime     = 200 * time.Millisecond
+	openAIModelsMaxBodyLen = 1024 * 1024
 )
 
 // OpenAITokenCache Token 缓存接口（复用 GeminiTokenCache 接口定义）
@@ -22,17 +31,20 @@ type OpenAITokenProvider struct {
 	accountRepo        AccountRepository
 	tokenCache         OpenAITokenCache
 	openAIOAuthService *OpenAIOAuthService
+	httpUpstream       HTTPUpstream
 }
 
 func NewOpenAITokenProvider(
 	accountRepo AccountRepository,
 	tokenCache OpenAITokenCache,
 	openAIOAuthService *OpenAIOAuthService,
+	httpUpstream HTTPUpstream,
 ) *OpenAITokenProvider {
 	return &OpenAITokenProvider{
 		accountRepo:        accountRepo,
 		tokenCache:         tokenCache,
 		openAIOAuthService: openAIOAuthService,
+		httpUpstream:       httpUpstream,
 	}
 }
 
@@ -197,4 +209,118 @@ func (p *OpenAITokenProvider) GetAccessToken(ctx context.Context, account *Accou
 	}
 
 	return accessToken, nil
+}
+
+func (p *OpenAITokenProvider) ListModels(ctx context.Context, account *Account) ([]openai.Model, error) {
+	if p == nil {
+		return nil, errors.New("openai token provider is nil")
+	}
+	if account == nil {
+		return nil, errors.New("account is nil")
+	}
+	if account.Platform != PlatformOpenAI {
+		return nil, errors.New("not an openai account")
+	}
+	if p.httpUpstream == nil {
+		return nil, errors.New("http upstream is nil")
+	}
+
+	var accessToken string
+	var err error
+
+	if account.Type == AccountTypeOAuth {
+		accessToken, err = p.GetAccessToken(ctx, account)
+		if err != nil {
+			return nil, fmt.Errorf("get access token failed: %w", err)
+		}
+	} else {
+		accessToken = account.GetCredential("api_key")
+		if accessToken == "" {
+			return nil, errors.New("api_key not found in credentials")
+		}
+	}
+
+	baseURL := strings.TrimSpace(account.GetCredential("base_url"))
+	if baseURL == "" {
+		baseURL = "https://api.openai.com"
+	}
+
+	normalizedBaseURL, err := urlvalidator.ValidateURLFormat(baseURL, false)
+	if err != nil {
+		return nil, fmt.Errorf("invalid base_url: %w", err)
+	}
+
+	modelsURL := normalizedBaseURL + "/v1/models"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, modelsURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("authorization", "Bearer "+strings.TrimSpace(accessToken))
+	req.Header.Set("accept", "application/json")
+
+	proxyURL := ""
+	if account.ProxyID != nil && account.Proxy != nil {
+		proxyURL = account.Proxy.URL()
+	}
+
+	resp, err := p.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
+	if err != nil {
+		return nil, fmt.Errorf("openai models request failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, openAIModelsMaxBodyLen))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		msg := ExtractUpstreamErrorMessage(body)
+		msg = sanitizeUpstreamErrorMessage(msg)
+		if msg == "" {
+			msg = fmt.Sprintf("models request failed with status %d", resp.StatusCode)
+		}
+		return nil, fmt.Errorf("openai models request failed: %s", msg)
+	}
+
+	var parsed struct {
+		Data []struct {
+			ID      string `json:"id"`
+			Object  string `json:"object"`
+			Created int64  `json:"created"`
+			OwnedBy string `json:"owned_by"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return nil, fmt.Errorf("parse openai models response: %w", err)
+	}
+	if len(parsed.Data) == 0 {
+		return nil, errors.New("openai models response is empty")
+	}
+
+	seen := make(map[string]struct{}, len(parsed.Data))
+	result := make([]openai.Model, 0, len(parsed.Data))
+	for _, m := range parsed.Data {
+		id := strings.TrimSpace(m.ID)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		display := id
+		result = append(result, openai.Model{
+			ID:          id,
+			Object:      "model",
+			Created:     m.Created,
+			OwnedBy:     strings.TrimSpace(m.OwnedBy),
+			Type:        "model",
+			DisplayName: display,
+		})
+	}
+	if len(result) == 0 {
+		return nil, errors.New("openai models response contained no model ids")
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].ID < result[j].ID
+	})
+	return result, nil
 }

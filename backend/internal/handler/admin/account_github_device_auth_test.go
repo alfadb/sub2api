@@ -102,6 +102,7 @@ func setupAccountGitHubDeviceAuthRouter(t *testing.T) (*gin.Engine, *githubDevic
 		copilotToken,
 		nil,
 		nil,
+		nil,
 	)
 
 	router.POST("/api/v1/admin/accounts/:id/github/device/start", accountHandler.StartGitHubDeviceAuth)

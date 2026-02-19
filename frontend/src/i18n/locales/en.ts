@@ -1269,10 +1269,20 @@ export default {
       title: 'Account Management',
       description: 'Manage AI platform accounts and credentials',
       createAccount: 'Create Account',
+      pleaseEnterGitHubToken: 'Please enter GitHub token',
       deviceAuthAction: 'Device Auth',
       refreshModels: 'Refresh Models',
       refreshModelsSuccess: 'Models refreshed',
       refreshModelsFailed: 'Failed to refresh models',
+      copilotAuth: {
+        modeLabel: 'Copilot Auth Mode',
+        deviceAuth: 'Device Auth',
+        apiKey: 'API Key',
+        deviceHint: 'Recommended: create the account, then sign in via GitHub Device Auth (no token needed).',
+        apiKeyHint: 'Paste a GitHub token/PAT with Copilot access.',
+        githubTokenLabel: 'GitHub Token',
+        noKeyRequired: 'Token (Device Auth)'
+      },
       deviceAuth: {
         title: 'GitHub Device Authorization',
         step1: 'Copy Code & Open Link',

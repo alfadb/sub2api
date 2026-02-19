@@ -1357,10 +1357,20 @@ export default {
       title: '账号管理',
       description: '管理 AI 平台账号和 Cookie',
       createAccount: '添加账号',
+      pleaseEnterGitHubToken: '请输入 GitHub Token',
       deviceAuthAction: '设备授权',
       refreshModels: '刷新模型',
       refreshModelsSuccess: '模型已刷新',
       refreshModelsFailed: '刷新模型失败',
+      copilotAuth: {
+        modeLabel: 'Copilot 认证模式',
+        deviceAuth: 'Device Auth',
+        apiKey: 'API-KEY',
+        deviceHint: '推荐：创建后使用设备授权登录 GitHub（无需先填 Token）。',
+        apiKeyHint: '手动粘贴 GitHub Token/PAT（需要具备 Copilot 权限）。',
+        githubTokenLabel: 'GitHub Token',
+        noKeyRequired: 'Token（Device Auth 无需填写）'
+      },
       deviceAuth: {
         title: 'GitHub 设备授权',
         step1: '复制授权码并打开链接',

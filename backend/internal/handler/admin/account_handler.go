@@ -589,7 +589,14 @@ func (h *AccountHandler) PollGitHubDeviceAuth(c *gin.Context) {
 				newExtra[service.AccountExtraKeyAvailableModels] = ids
 				newExtra[service.AccountExtraKeyAvailableModelsUpdatedAt] = now
 				newExtra[service.AccountExtraKeyAvailableModelsSource] = "github_copilot"
+				newExtra[service.AccountExtraKeyAvailableModelsError] = ""
+				newExtra[service.AccountExtraKeyAvailableModelsErrorAt] = ""
 			}
+		} else if err != nil {
+			now := time.Now().Format(time.RFC3339)
+			newExtra[service.AccountExtraKeyAvailableModelsSource] = "github_copilot"
+			newExtra[service.AccountExtraKeyAvailableModelsError] = err.Error()
+			newExtra[service.AccountExtraKeyAvailableModelsErrorAt] = now
 		}
 	}
 

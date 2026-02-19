@@ -166,6 +166,7 @@ func (p *GitHubCopilotTokenProvider) ListModels(ctx context.Context, account *Ac
 		var parsed struct {
 			Message      string `json:"message"`
 			ErrorDetails struct {
+				Title   string `json:"title"`
 				Message string `json:"message"`
 			} `json:"error_details"`
 		}
@@ -296,6 +297,12 @@ func (p *GitHubCopilotTokenProvider) exchangeCopilotTokenWithTTL(ctx context.Con
 		}
 		if msg == "" {
 			msg = "token exchange failed"
+		}
+		if resp.StatusCode == http.StatusForbidden {
+			lower := strings.ToLower(msg)
+			if strings.Contains(lower, "contact support") || strings.Contains(lower, "resource not accessible") {
+				msg = msg + " (This usually means the GitHub account has no Copilot access or is restricted.)"
+			}
 		}
 		return "", 0, fmt.Errorf("copilot token exchange failed: status=%d message=%s", resp.StatusCode, msg)
 	}

@@ -52,6 +52,9 @@ func (f *fakeGitHubHTTPUpstreamForAdminHandler) Do(req *http.Request, _ string, 
 	case "https://github.com/login/oauth/access_token":
 		body := `{"access_token":"gho_xxx","token_type":"bearer","scope":"read:user"}`
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body))}, nil
+	case "https://api.github.com/copilot_internal/v2/token":
+		body := `{"can_signup_for_limited":false,"error_details":{"url":"https://support.github.com?editor={EDITOR}","message":"Contact Support. You are currently logged in as alfadb.","title":"Contact Support","notification_id":"feature_flag_blocked"},"message":"Resource not accessible by integration."}`
+		return &http.Response{StatusCode: http.StatusForbidden, Body: io.NopCloser(strings.NewReader(body))}, nil
 	default:
 		return &http.Response{StatusCode: 404, Body: io.NopCloser(strings.NewReader(`{"error":"not_found"}`))}, nil
 	}
@@ -82,6 +85,7 @@ func setupAccountGitHubDeviceAuthRouter(t *testing.T) (*gin.Engine, *githubDevic
 	store := service.NewInMemoryGitHubDeviceSessionStore()
 	upstream := &fakeGitHubHTTPUpstreamForAdminHandler{}
 	deviceAuth := service.NewGitHubDeviceAuthService(store, upstream)
+	copilotToken := service.NewGitHubCopilotTokenProvider(nil, upstream)
 
 	accountHandler := NewAccountHandler(
 		adminSvc,
@@ -95,7 +99,7 @@ func setupAccountGitHubDeviceAuthRouter(t *testing.T) (*gin.Engine, *githubDevic
 		nil,
 		nil,
 		deviceAuth,
-		nil,
+		copilotToken,
 		nil,
 		nil,
 	)
@@ -135,6 +139,43 @@ func TestAccountGitHubDeviceAuth_StartPollStoresToken(t *testing.T) {
 	gh, ok := adminSvc.updatedInput.Credentials["github_token"].(string)
 	require.True(t, ok)
 	require.Equal(t, "gho_xxx", gh)
+}
+
+func TestAccountGitHubDeviceAuth_PollStoresCopilotModelsError(t *testing.T) {
+	router, adminSvc := setupAccountGitHubDeviceAuthRouter(t)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/3/github/device/start", bytes.NewBufferString(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var startEnv struct {
+		Code int `json:"code"`
+		Data struct {
+			SessionID string `json:"session_id"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &startEnv))
+	require.Equal(t, 0, startEnv.Code)
+	require.NotEmpty(t, startEnv.Data.SessionID)
+
+	pollBody, _ := json.Marshal(map[string]any{"session_id": startEnv.Data.SessionID})
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/3/github/device/poll", bytes.NewReader(pollBody))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	require.NotNil(t, adminSvc.updatedInput)
+	require.NotNil(t, adminSvc.updatedInput.Extra)
+
+	source, _ := adminSvc.updatedInput.Extra[service.AccountExtraKeyAvailableModelsSource].(string)
+	require.Equal(t, "github_copilot", source)
+
+	errMsg, _ := adminSvc.updatedInput.Extra[service.AccountExtraKeyAvailableModelsError].(string)
+	errAt, _ := adminSvc.updatedInput.Extra[service.AccountExtraKeyAvailableModelsErrorAt].(string)
+	require.NotEmpty(t, errMsg)
+	require.NotEmpty(t, errAt)
 }
 
 func TestAccountGitHubDeviceAuth_Cancel(t *testing.T) {

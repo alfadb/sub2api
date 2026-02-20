@@ -548,7 +548,36 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
 	}
 
-	// Process SSE stream
+	// Chat Completions with stream=false returns plain JSON, not SSE.
+	if useChatCompletions {
+		respBody, _ := io.ReadAll(resp.Body)
+		var data map[string]any
+		if err := json.Unmarshal(respBody, &data); err != nil {
+			return s.sendErrorAndEnd(c, "Failed to parse upstream response")
+		}
+		if errData, ok := data["error"].(map[string]any); ok {
+			msg := "Unknown error"
+			if m, ok := errData["message"].(string); ok {
+				msg = m
+			}
+			return s.sendErrorAndEnd(c, msg)
+		}
+		choicesAny, _ := data["choices"].([]any)
+		if len(choicesAny) == 0 {
+			return s.sendErrorAndEnd(c, "Empty upstream response")
+		}
+		choice0, _ := choicesAny[0].(map[string]any)
+		msgAny, _ := choice0["message"].(map[string]any)
+		if msgAny != nil {
+			if text, _ := openAIChatMessageContentToText(msgAny["content"]); strings.TrimSpace(text) != "" {
+				s.sendEvent(c, TestEvent{Type: "content", Text: text})
+			}
+		}
+		s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+		return nil
+	}
+
+	// Process SSE stream (Responses API uses streaming)
 	return s.processOpenAIStream(c, resp.Body)
 }
 

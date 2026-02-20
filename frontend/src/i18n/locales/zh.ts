@@ -1369,7 +1369,8 @@ export default {
         deviceHint: '推荐：创建后使用设备授权登录 GitHub（无需先填 Token）。',
         apiKeyHint: '手动粘贴 GitHub Token/PAT（需要具备 Copilot 权限）。',
         githubTokenLabel: 'GitHub Token',
-        noKeyRequired: 'Token（Device Auth 无需填写）'
+        noKeyRequired: 'Token（Device Auth 无需填写）',
+        leaveEmptyHint: '留空保持当前 Token 不变，也可通过 Device Auth 更新。'
       },
       deviceAuth: {
         title: 'GitHub 设备授权',

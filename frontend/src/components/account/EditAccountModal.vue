@@ -67,8 +67,8 @@
                     ? 'sk-...'
                     : 'sk-ant-...'
             "
-          />
-          <p class="input-hint">{{ t('admin.accounts.leaveEmptyToKeep') }}</p>
+           />
+          <p class="input-hint">{{ account.platform === 'copilot' ? t('admin.accounts.copilotAuth.leaveEmptyHint') : t('admin.accounts.leaveEmptyToKeep') }}</p>
         </div>
 
         <!-- Model Restriction Section (不适用于 Gemini 和 Antigravity) -->

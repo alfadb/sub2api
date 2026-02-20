@@ -1281,7 +1281,8 @@ export default {
         deviceHint: 'Recommended: create the account, then sign in via GitHub Device Auth (no token needed).',
         apiKeyHint: 'Paste a GitHub token/PAT with Copilot access.',
         githubTokenLabel: 'GitHub Token',
-        noKeyRequired: 'Token (Device Auth)'
+        noKeyRequired: 'Token (Device Auth)',
+        leaveEmptyHint: 'Leave empty to keep current token. You can also update via Device Auth.'
       },
       deviceAuth: {
         title: 'GitHub Device Authorization',

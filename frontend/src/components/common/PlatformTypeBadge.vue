@@ -24,6 +24,8 @@
       </svg>
       <!-- Setup Token icon -->
       <Icon v-else-if="type === 'setup-token'" name="shield" size="xs" />
+      <!-- Token icon (Copilot) -->
+      <Icon v-else-if="platform === 'copilot' && type === 'apikey'" name="shield" size="xs" />
       <!-- API Key icon -->
       <Icon v-else name="key" size="xs" />
       <span>{{ typeLabel }}</span>
@@ -60,7 +62,8 @@ const typeLabel = computed(() => {
     case 'setup-token':
       return 'Token'
     case 'apikey':
-      return 'Key'
+      // Copilot accounts use GitHub Tokens (via Device Auth or manual PAT), not generic API Keys
+      return props.platform === 'copilot' ? 'Token' : 'Key'
     default:
       return props.type
   }

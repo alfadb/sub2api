@@ -30,8 +30,25 @@ func isResponsesAPIUnsupportedError(upstreamMsg string, upstreamBody []byte) boo
 	if strings.Contains(msg, "responses api") && strings.Contains(msg, "does not support") {
 		return true
 	}
+	if strings.Contains(msg, "not supported via responses api") {
+		return true
+	}
 	lowerBody := strings.ToLower(string(upstreamBody))
-	return strings.Contains(lowerBody, "does not support responses api")
+	if strings.Contains(lowerBody, "does not support responses api") {
+		return true
+	}
+	if strings.Contains(lowerBody, "not supported via responses api") {
+		return true
+	}
+	var parsed struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(upstreamBody, &parsed) == nil && parsed.Error.Code == "unsupported_api_for_model" {
+		return true
+	}
+	return false
 }
 
 func (s *OpenAIMessagesCompatService) chatCompletionsURLForAccount(account *Account) (string, error) {
@@ -470,6 +487,10 @@ func (s *OpenAIMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 		return nil, err
 	}
 
+	if isGitHubCopilotAccount(account) && !ShouldUseCopilotResponsesAPI(mappedModel) {
+		return s.forwardViaChatCompletions(ctx, c, account, parsed, claudeReq, originalModel, mappedModel, token, startTime)
+	}
+
 	upstreamReq, err := s.openai.buildUpstreamRequest(ctx, c, account, openaiBody, token, upstreamStream, "", false, isGitHubCopilotAccount(account))
 	if err != nil {
 		writeClaudeError(c, http.StatusBadGateway, "upstream_error", err.Error())
@@ -713,6 +734,10 @@ func (s *OpenAIMessagesCompatService) ForwardCountTokens(ctx context.Context, c 
 	if err != nil {
 		writeClaudeError(c, http.StatusBadGateway, "upstream_error", err.Error())
 		return err
+	}
+
+	if isGitHubCopilotAccount(account) && !ShouldUseCopilotResponsesAPI(mappedModel) {
+		return s.forwardCountTokensViaChatCompletions(ctx, c, account, parsed, claudeReq, mappedModel, token)
 	}
 
 	upstreamReq, err := s.openai.buildUpstreamRequest(ctx, c, account, openaiBody, token, upstreamStream, "", false, isGitHubCopilotAccount(account))

@@ -51,7 +51,7 @@
           <p class="input-hint">{{ baseUrlHint }}</p>
         </div>
         <div>
-          <label class="input-label">{{ t('admin.accounts.apiKey') }}</label>
+          <label class="input-label">{{ account.platform === 'copilot' ? t('admin.accounts.copilotAuth.githubTokenLabel') : t('admin.accounts.apiKey') }}</label>
           <input
             v-model="editApiKey"
             type="password"

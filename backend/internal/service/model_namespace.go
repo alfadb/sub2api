@@ -1,10 +1,38 @@
 package service
 
 import (
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 )
+
+var gptVersionRe = regexp.MustCompile(`^gpt-(\d+)`)
+
+// ShouldUseCopilotResponsesAPI returns true if the given model should use the
+// OpenAI Responses API (/responses) rather than Chat Completions
+// (/chat/completions) when routing through GitHub Copilot.
+//
+// Routing logic (matches opencode's implementation):
+//   - GPT-5+ (except gpt-5-mini variants) → Responses API
+//   - Everything else (gpt-4.1, gpt-4o, gpt-5-mini, o-series, etc.) → Chat Completions
+func ShouldUseCopilotResponsesAPI(modelID string) bool {
+	m := strings.ToLower(strings.TrimSpace(modelID))
+	match := gptVersionRe.FindStringSubmatch(m)
+	if match == nil {
+		return false
+	}
+	version, err := strconv.Atoi(match[1])
+	if err != nil {
+		return false
+	}
+	if version < 5 {
+		return false
+	}
+	// gpt-5-mini uses Chat Completions (not Responses API)
+	return !strings.HasPrefix(m, "gpt-5-mini")
+}
 
 type ModelNamespace struct {
 	Provider     string

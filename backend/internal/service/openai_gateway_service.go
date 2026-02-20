@@ -1097,14 +1097,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 }
 
 func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token string, isStream bool, promptCacheKey string, isCodexCLI bool, isGitHubCopilot bool) (*http.Request, error) {
-	// Determine target URL based on account type
 	var targetURL string
 	switch account.Type {
 	case AccountTypeOAuth:
-		// OAuth accounts use ChatGPT internal API
 		targetURL = chatgptCodexURL
 	case AccountTypeAPIKey:
-		// API Key accounts use Platform API or custom base URL
 		baseURL := strings.TrimSpace(account.GetCredential("base_url"))
 		if baseURL == "" && account.Platform == PlatformCopilot {
 			baseURL = "https://api.githubcopilot.com"

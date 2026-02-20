@@ -414,7 +414,11 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid base URL: %s", err.Error()))
 		}
 		normalizedBaseURL = normalized
-		apiURL = openaiResponsesURLFromBaseURL(normalizedBaseURL, isGitHubCopilot)
+		if isGitHubCopilot && !ShouldUseCopilotResponsesAPI(testModelID) {
+			apiURL = openaiChatCompletionsURLFromBaseURL(normalizedBaseURL, isGitHubCopilot)
+		} else {
+			apiURL = openaiResponsesURLFromBaseURL(normalizedBaseURL, isGitHubCopilot)
+		}
 	} else {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Unsupported account type: %s", account.Type))
 	}
@@ -426,9 +430,23 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	c.Writer.Header().Set("X-Accel-Buffering", "no")
 	c.Writer.Flush()
 
-	// Create OpenAI Responses API payload
-	payload := createOpenAITestPayload(testModelID, isOAuth)
-	payloadBytes, _ := json.Marshal(payload)
+	useChatCompletions := isGitHubCopilot && !ShouldUseCopilotResponsesAPI(testModelID)
+	var payloadBytes []byte
+	if useChatCompletions {
+		payload := map[string]any{
+			"model": testModelID,
+			"messages": []any{
+				map[string]any{"role": "system", "content": openai.DefaultInstructions},
+				map[string]any{"role": "user", "content": "hi"},
+			},
+			"stream":     false,
+			"max_tokens": 16,
+		}
+		payloadBytes, _ = json.Marshal(payload)
+	} else {
+		payload := createOpenAITestPayload(testModelID, isOAuth)
+		payloadBytes, _ = json.Marshal(payload)
+	}
 
 	// Send test_start event
 	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})

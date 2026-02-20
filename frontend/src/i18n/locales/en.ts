@@ -1277,7 +1277,7 @@ export default {
       copilotAuth: {
         modeLabel: 'Copilot Auth Mode',
         deviceAuth: 'Device Auth',
-        apiKey: 'API Key',
+        apiKey: 'Token',
         deviceHint: 'Recommended: create the account, then sign in via GitHub Device Auth (no token needed).',
         apiKeyHint: 'Paste a GitHub token/PAT with Copilot access.',
         githubTokenLabel: 'GitHub Token',

@@ -1365,7 +1365,7 @@ export default {
       copilotAuth: {
         modeLabel: 'Copilot 认证模式',
         deviceAuth: 'Device Auth',
-        apiKey: 'API-KEY',
+        apiKey: 'Token',
         deviceHint: '推荐：创建后使用设备授权登录 GitHub（无需先填 Token）。',
         apiKeyHint: '手动粘贴 GitHub Token/PAT（需要具备 Copilot 权限）。',
         githubTokenLabel: 'GitHub Token',

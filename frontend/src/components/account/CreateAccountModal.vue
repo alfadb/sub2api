@@ -906,14 +906,13 @@
           </p>
         </div>
 
-        <div>
+        <div v-if="form.platform !== 'copilot' || copilotAuthMode === 'api-key'">
           <label class="input-label">{{ apiKeyLabel }}</label>
           <input
             v-model="apiKeyValue"
             type="password"
             :required="form.platform !== 'copilot' || copilotAuthMode === 'api-key'"
             class="input font-mono"
-            :disabled="form.platform === 'copilot' && copilotAuthMode === 'device'"
             :placeholder="
               form.platform === 'openai'
                 ? 'sk-proj-...'

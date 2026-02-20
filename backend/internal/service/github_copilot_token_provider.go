@@ -143,7 +143,7 @@ func (p *GitHubCopilotTokenProvider) ListModels(ctx context.Context, account *Ac
 	if err != nil {
 		return nil, err
 	}
-	applyGitHubCopilotHeaders(req, false, "user")
+	applyGitHubCopilotHeaders(req)
 	req.Header.Set("authorization", "Bearer "+strings.TrimSpace(token))
 	if strings.TrimSpace(req.Header.Get("accept")) == "" {
 		req.Header.Set("accept", "application/json")

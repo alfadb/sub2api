@@ -961,15 +961,8 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		return nil, err
 	}
 
-	copilotVision := false
-	copilotInitiator := "user"
-	if isGitHubCopilot {
-		copilotVision = githubCopilotVisionEnabledFromResponsesPayload(reqBody)
-		copilotInitiator = githubCopilotInitiatorFromResponsesPayload(reqBody)
-	}
-
 	// Build upstream request
-	upstreamReq, err := s.buildUpstreamRequest(ctx, c, account, body, token, reqStream, promptCacheKey, isCodexCLI, isGitHubCopilot, copilotVision, copilotInitiator)
+	upstreamReq, err := s.buildUpstreamRequest(ctx, c, account, body, token, reqStream, promptCacheKey, isCodexCLI, isGitHubCopilot)
 	if err != nil {
 		return nil, err
 	}
@@ -1016,7 +1009,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		if githubToken != "" {
 			s.githubCopilotToken.Invalidate(ctx, account)
 			if refreshed, refreshErr := s.githubCopilotToken.GetAccessToken(ctx, account); refreshErr == nil && strings.TrimSpace(refreshed) != "" {
-				retryReq, buildErr := s.buildUpstreamRequest(ctx, c, account, body, refreshed, reqStream, promptCacheKey, isCodexCLI, isGitHubCopilot, copilotVision, copilotInitiator)
+				retryReq, buildErr := s.buildUpstreamRequest(ctx, c, account, body, refreshed, reqStream, promptCacheKey, isCodexCLI, isGitHubCopilot)
 				if buildErr == nil {
 					retryResp, doErr := s.httpUpstream.Do(retryReq, proxyURL, account.ID, account.Concurrency)
 					if doErr == nil {
@@ -1103,7 +1096,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}, nil
 }
 
-func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token string, isStream bool, promptCacheKey string, isCodexCLI bool, isGitHubCopilot bool, copilotVision bool, copilotInitiator string) (*http.Request, error) {
+func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token string, isStream bool, promptCacheKey string, isCodexCLI bool, isGitHubCopilot bool) (*http.Request, error) {
 	// Determine target URL based on account type
 	var targetURL string
 	switch account.Type {
@@ -1132,10 +1125,10 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 		targetURL = openaiPlatformAPIURL
 	}
 
-	return s.buildUpstreamRequestWithTargetURL(ctx, c, account, body, token, isStream, promptCacheKey, isCodexCLI, isGitHubCopilot, copilotVision, copilotInitiator, targetURL)
+	return s.buildUpstreamRequestWithTargetURL(ctx, c, account, body, token, isStream, promptCacheKey, isCodexCLI, isGitHubCopilot, targetURL)
 }
 
-func (s *OpenAIGatewayService) buildUpstreamRequestWithTargetURL(ctx context.Context, c *gin.Context, account *Account, body []byte, token string, isStream bool, promptCacheKey string, isCodexCLI bool, isGitHubCopilot bool, copilotVision bool, copilotInitiator string, targetURL string) (*http.Request, error) {
+func (s *OpenAIGatewayService) buildUpstreamRequestWithTargetURL(ctx context.Context, c *gin.Context, account *Account, body []byte, token string, isStream bool, promptCacheKey string, isCodexCLI bool, isGitHubCopilot bool, targetURL string) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, "POST", targetURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -1185,7 +1178,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestWithTargetURL(ctx context.Con
 	}
 
 	if isGitHubCopilot {
-		applyGitHubCopilotHeaders(req, copilotVision, copilotInitiator)
+		applyGitHubCopilotHeaders(req)
 	}
 
 	if isStream && strings.TrimSpace(req.Header.Get("accept")) == "" {

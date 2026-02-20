@@ -287,7 +287,7 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 	req.Header.Set("anthropic-version", "2023-06-01")
 
 	if account.Type == "apikey" && isGitHubCopilotAccount(account) {
-		applyGitHubCopilotHeaders(req, false, "user")
+		applyGitHubCopilotHeaders(req)
 	} else {
 		// Apply Claude Code client headers
 		for key, value := range claude.DefaultHeaders {
@@ -451,7 +451,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		}
 	}
 	if account.Type == "apikey" && isGitHubCopilotAccount(account) {
-		applyGitHubCopilotHeaders(req, false, "user")
+		applyGitHubCopilotHeaders(req)
 	}
 
 	// Get proxy URL
@@ -490,7 +490,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 				req2.Header.Set("Content-Type", "application/json")
 				req2.Header.Set("Authorization", "Bearer "+authToken)
 				req2.Header.Set("accept", "application/json")
-				applyGitHubCopilotHeaders(req2, false, "user")
+				applyGitHubCopilotHeaders(req2)
 
 				resp2, err2 := s.httpUpstream.DoWithTLS(req2, proxyURL, account.ID, account.Concurrency, account.IsTLSFingerprintEnabled())
 				if err2 != nil {

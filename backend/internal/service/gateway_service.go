@@ -3038,12 +3038,6 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	shouldMimicClaudeCode := account.IsOAuth() && !isClaudeCode
 
 	isGitHubCopilot := isGitHubCopilotAccount(account)
-	copilotVision := false
-	copilotInitiator := "user"
-	if isGitHubCopilot {
-		copilotVision = githubCopilotVisionEnabledFromClaudeMessagesPayload(parsed.Messages)
-		copilotInitiator = githubCopilotInitiatorFromClaudeMessagesPayload(parsed.Messages)
-	}
 	thinkingEnabled := parsed.ThinkingEnabled
 
 	if shouldMimicClaudeCode {
@@ -3125,7 +3119,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		// 构建上游请求（每次重试需要重新构建，因为请求体需要重新读取）
 		// Capture upstream request body for ops retry of this attempt.
 		c.Set(OpsUpstreamRequestBodyKey, string(body))
-		upstreamReq, err := s.buildUpstreamRequest(ctx, c, account, body, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode, isGitHubCopilot, copilotVision, copilotInitiator, thinkingEnabled)
+		upstreamReq, err := s.buildUpstreamRequest(ctx, c, account, body, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode, isGitHubCopilot, thinkingEnabled)
 		if err != nil {
 			return nil, err
 		}
@@ -3164,7 +3158,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 				refreshed = strings.TrimSpace(t)
 			}
 			if refreshed != "" {
-				retryReq, buildErr := s.buildUpstreamRequest(ctx, c, account, body, refreshed, tokenType, reqModel, reqStream, shouldMimicClaudeCode, isGitHubCopilot, copilotVision, copilotInitiator, thinkingEnabled)
+				retryReq, buildErr := s.buildUpstreamRequest(ctx, c, account, body, refreshed, tokenType, reqModel, reqStream, shouldMimicClaudeCode, isGitHubCopilot, thinkingEnabled)
 				if buildErr == nil {
 					retryResp, doErr := s.httpUpstream.DoWithTLS(retryReq, proxyURL, account.ID, account.Concurrency, account.IsTLSFingerprintEnabled())
 					if doErr == nil {
@@ -3225,7 +3219,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 					//    also downgrade tool_use/tool_result blocks to text.
 
 					filteredBody := FilterThinkingBlocksForRetry(body)
-					retryReq, buildErr := s.buildUpstreamRequest(ctx, c, account, filteredBody, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode, isGitHubCopilot, copilotVision, copilotInitiator, thinkingEnabled)
+					retryReq, buildErr := s.buildUpstreamRequest(ctx, c, account, filteredBody, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode, isGitHubCopilot, thinkingEnabled)
 					if buildErr == nil {
 						retryResp, retryErr := s.httpUpstream.DoWithTLS(retryReq, proxyURL, account.ID, account.Concurrency, account.IsTLSFingerprintEnabled())
 						if retryErr == nil {
@@ -3257,7 +3251,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 								if looksLikeToolSignatureError(msg2) && time.Since(retryStart) < maxRetryElapsed {
 									log.Printf("Account %d: signature retry still failing and looks tool-related, retrying with tool blocks downgraded", account.ID)
 									filteredBody2 := FilterSignatureSensitiveBlocksForRetry(body)
-									retryReq2, buildErr2 := s.buildUpstreamRequest(ctx, c, account, filteredBody2, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode, isGitHubCopilot, copilotVision, copilotInitiator, thinkingEnabled)
+									retryReq2, buildErr2 := s.buildUpstreamRequest(ctx, c, account, filteredBody2, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode, isGitHubCopilot, thinkingEnabled)
 									if buildErr2 == nil {
 										retryResp2, retryErr2 := s.httpUpstream.DoWithTLS(retryReq2, proxyURL, account.ID, account.Concurrency, account.IsTLSFingerprintEnabled())
 										if retryErr2 == nil {
@@ -3510,7 +3504,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	}, nil
 }
 
-func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token, tokenType, modelID string, reqStream bool, mimicClaudeCode bool, isGitHubCopilot bool, copilotVision bool, copilotInitiator string, thinkingEnabled bool) (*http.Request, error) {
+func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token, tokenType, modelID string, reqStream bool, mimicClaudeCode bool, isGitHubCopilot bool, thinkingEnabled bool) (*http.Request, error) {
 	// 确定目标URL
 	targetURL := claudeAPIURL
 	if account.Type == AccountTypeAPIKey {
@@ -3579,7 +3573,7 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 	}
 
 	if isGitHubCopilot {
-		applyGitHubCopilotHeaders(req, copilotVision, copilotInitiator)
+		applyGitHubCopilotHeaders(req)
 	}
 
 	// 确保必要的headers存在
@@ -5317,7 +5311,7 @@ func (s *GatewayService) buildCountTokensRequest(ctx context.Context, c *gin.Con
 	}
 
 	if isGitHubCopilotAccount(account) {
-		applyGitHubCopilotHeaders(req, false, "user")
+		applyGitHubCopilotHeaders(req)
 	}
 
 	// 确保必要的 headers 存在

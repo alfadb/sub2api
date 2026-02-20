@@ -96,7 +96,7 @@ func (s *OpenAIMessagesCompatService) forwardViaChatCompletions(ctx context.Cont
 		return nil, err
 	}
 
-	upstreamReq, err := s.openai.buildUpstreamRequestWithTargetURL(ctx, c, account, openaiBody, token, false, "", false, isGitHubCopilotAccount(account), false, "user", targetURL)
+	upstreamReq, err := s.openai.buildUpstreamRequestWithTargetURL(ctx, c, account, openaiBody, token, false, "", false, isGitHubCopilotAccount(account), targetURL)
 	if err != nil {
 		writeClaudeError(c, http.StatusBadGateway, "upstream_error", err.Error())
 		return nil, err
@@ -273,7 +273,7 @@ func (s *OpenAIMessagesCompatService) forwardCountTokensViaChatCompletions(ctx c
 		return err
 	}
 
-	upstreamReq, err := s.openai.buildUpstreamRequestWithTargetURL(ctx, c, account, openaiBody, token, false, "", false, isGitHubCopilotAccount(account), false, "user", targetURL)
+	upstreamReq, err := s.openai.buildUpstreamRequestWithTargetURL(ctx, c, account, openaiBody, token, false, "", false, isGitHubCopilotAccount(account), targetURL)
 	if err != nil {
 		writeClaudeError(c, http.StatusBadGateway, "upstream_error", err.Error())
 		return err
@@ -470,7 +470,7 @@ func (s *OpenAIMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 		return nil, err
 	}
 
-	upstreamReq, err := s.openai.buildUpstreamRequest(ctx, c, account, openaiBody, token, upstreamStream, "", false, isGitHubCopilotAccount(account), false, "user")
+	upstreamReq, err := s.openai.buildUpstreamRequest(ctx, c, account, openaiBody, token, upstreamStream, "", false, isGitHubCopilotAccount(account))
 	if err != nil {
 		writeClaudeError(c, http.StatusBadGateway, "upstream_error", err.Error())
 		return nil, err
@@ -715,7 +715,7 @@ func (s *OpenAIMessagesCompatService) ForwardCountTokens(ctx context.Context, c 
 		return err
 	}
 
-	upstreamReq, err := s.openai.buildUpstreamRequest(ctx, c, account, openaiBody, token, upstreamStream, "", false, isGitHubCopilotAccount(account), false, "user")
+	upstreamReq, err := s.openai.buildUpstreamRequest(ctx, c, account, openaiBody, token, upstreamStream, "", false, isGitHubCopilotAccount(account))
 	if err != nil {
 		writeClaudeError(c, http.StatusBadGateway, "upstream_error", err.Error())
 		return err

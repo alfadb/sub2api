@@ -545,6 +545,12 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 					if text, _ := openAIChatMessageContentToText(msgAny["content"]); strings.TrimSpace(text) != "" {
 						s.sendEvent(c, TestEvent{Type: "content", Text: text})
 						gotContent = true
+					} else if reasoning, _ := msgAny["reasoning_text"].(string); strings.TrimSpace(reasoning) != "" {
+						s.sendEvent(c, TestEvent{Type: "content", Text: "[reasoning] " + reasoning})
+						gotContent = true
+					} else if toolCalls, _ := msgAny["tool_calls"].([]any); len(toolCalls) > 0 {
+						s.sendEvent(c, TestEvent{Type: "content", Text: "[tool call received]"})
+						gotContent = true
 					}
 				}
 				if !gotContent {
@@ -581,6 +587,12 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		if msgAny != nil {
 			if text, _ := openAIChatMessageContentToText(msgAny["content"]); strings.TrimSpace(text) != "" {
 				s.sendEvent(c, TestEvent{Type: "content", Text: text})
+				gotContent = true
+			} else if reasoning, _ := msgAny["reasoning_text"].(string); strings.TrimSpace(reasoning) != "" {
+				s.sendEvent(c, TestEvent{Type: "content", Text: "[reasoning] " + reasoning})
+				gotContent = true
+			} else if toolCalls, _ := msgAny["tool_calls"].([]any); len(toolCalls) > 0 {
+				s.sendEvent(c, TestEvent{Type: "content", Text: "[tool call received]"})
 				gotContent = true
 			}
 		}

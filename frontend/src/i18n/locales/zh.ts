@@ -1167,7 +1167,8 @@ export default {
         anthropic: 'Anthropic',
         openai: 'OpenAI',
         gemini: 'Gemini',
-        antigravity: 'Antigravity'
+        antigravity: 'Antigravity',
+        copilot: 'GitHub Copilot'
       },
       saving: '保存中...',
       noGroups: '暂无分组',
@@ -1518,7 +1519,8 @@ export default {
         openai: 'OpenAI',
         anthropic: 'Anthropic',
         gemini: 'Gemini',
-        antigravity: 'Antigravity'
+        antigravity: 'Antigravity',
+        copilot: 'GitHub Copilot'
       },
       types: {
         oauth: 'OAuth',

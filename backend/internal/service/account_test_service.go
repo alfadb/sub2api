@@ -459,7 +459,11 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	// Set common headers
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+authToken)
-	req.Header.Set("accept", "text/event-stream")
+	if useChatCompletions {
+		req.Header.Set("accept", "application/json")
+	} else {
+		req.Header.Set("accept", "text/event-stream")
+	}
 
 	// Set OAuth-specific headers for ChatGPT internal API
 	if isOAuth {
@@ -536,10 +540,15 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 				}
 				choice0, _ := choicesAny[0].(map[string]any)
 				msgAny, _ := choice0["message"].(map[string]any)
+				gotContent := false
 				if msgAny != nil {
 					if text, _ := openAIChatMessageContentToText(msgAny["content"]); strings.TrimSpace(text) != "" {
 						s.sendEvent(c, TestEvent{Type: "content", Text: text})
+						gotContent = true
 					}
+				}
+				if !gotContent {
+					return s.sendErrorAndEnd(c, "Upstream returned empty content")
 				}
 				s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
 				return nil
@@ -568,10 +577,15 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		}
 		choice0, _ := choicesAny[0].(map[string]any)
 		msgAny, _ := choice0["message"].(map[string]any)
+		gotContent := false
 		if msgAny != nil {
 			if text, _ := openAIChatMessageContentToText(msgAny["content"]); strings.TrimSpace(text) != "" {
 				s.sendEvent(c, TestEvent{Type: "content", Text: text})
+				gotContent = true
 			}
+		}
+		if !gotContent {
+			return s.sendErrorAndEnd(c, "Upstream returned empty content")
 		}
 		s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
 		return nil

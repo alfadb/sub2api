@@ -4,12 +4,30 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 )
 
 const (
 	githubCopilotDefaultIntegrationID = "vscode-chat"
-	githubCopilotClientIdentifier     = "OpenCode/1.0"
 )
+
+var (
+	opencodeVersionService     *OpenCodeVersionService
+	opencodeVersionServiceOnce sync.Once
+)
+
+func SetOpenCodeVersionService(svc *OpenCodeVersionService) {
+	opencodeVersionServiceOnce.Do(func() {
+		opencodeVersionService = svc
+	})
+}
+
+func getOpenCodeClientIdentifier() string {
+	if opencodeVersionService != nil {
+		return opencodeVersionService.GetClientIdentifier()
+	}
+	return "OpenCode/1.2.10"
+}
 
 func isGitHubCopilotBaseURL(raw string) bool {
 	trimmed := strings.TrimSpace(raw)
@@ -52,7 +70,7 @@ func isGitHubCopilotAccount(account *Account) bool {
 }
 
 func githubCopilotDefaultUserAgent() string {
-	return githubCopilotClientIdentifier
+	return getOpenCodeClientIdentifier()
 }
 
 func IsGitHubCopilotBaseURL(raw string) bool {
@@ -84,9 +102,11 @@ func applyGitHubCopilotHeaders(req *http.Request) {
 	if req == nil {
 		return
 	}
-	req.Header.Set("Editor-Version", githubCopilotClientIdentifier)
-	req.Header.Set("Editor-Plugin-Version", githubCopilotClientIdentifier)
+	identifier := getOpenCodeClientIdentifier()
+	req.Header.Set("Editor-Version", identifier)
+	req.Header.Set("Editor-Plugin-Version", identifier)
 	req.Header.Set("Copilot-Integration-Id", githubCopilotDefaultIntegrationID)
+	req.Header.Set("User-Agent", identifier)
 }
 
 func applyGitHubCopilotTokenExchangeHeaders(req *http.Request, githubToken string) {
@@ -97,5 +117,5 @@ func applyGitHubCopilotTokenExchangeHeaders(req *http.Request, githubToken strin
 	if gh != "" {
 		req.Header.Set("Authorization", "Token "+gh)
 	}
-	req.Header.Set("User-Agent", githubCopilotClientIdentifier)
+	req.Header.Set("User-Agent", getOpenCodeClientIdentifier())
 }

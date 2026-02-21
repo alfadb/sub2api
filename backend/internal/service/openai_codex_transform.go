@@ -116,6 +116,22 @@ func applyCodexOAuthTransform(reqBody map[string]any, isCodexCLI bool) codexTran
 		result.Modified = true
 	}
 
+	// OAuth upstream (ChatGPT internal API) rejects string input; normalize to array format.
+	if inputStr, ok := reqBody["input"].(string); ok && strings.TrimSpace(inputStr) != "" {
+		reqBody["input"] = []any{
+			map[string]any{
+				"role": "user",
+				"content": []any{
+					map[string]any{
+						"type": "input_text",
+						"text": inputStr,
+					},
+				},
+			},
+		}
+		result.Modified = true
+	}
+
 	// 续链场景保留 item_reference 与 id，避免 call_id 上下文丢失。
 	if input, ok := reqBody["input"].([]any); ok {
 		input = filterCodexInput(input, needsToolContinuation)

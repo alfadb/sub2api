@@ -500,6 +500,54 @@ func normalizeCodexTools(reqBody map[string]any) bool {
 	return modified
 }
 
+// copilotUnsupportedToolTypes lists built-in tool types rejected by the
+// GitHub Copilot upstream (api.githubcopilot.com).
+var copilotUnsupportedToolTypes = map[string]bool{
+	"web_search":          true,
+	"web_search_20250305": true,
+	"web_search_preview":  true,
+	"code_interpreter":    true,
+	"computer_use":        true,
+}
+
+func stripUnsupportedCopilotTools(reqBody map[string]any) bool {
+	rawTools, ok := reqBody["tools"]
+	if !ok || rawTools == nil {
+		return false
+	}
+	tools, ok := rawTools.([]any)
+	if !ok || len(tools) == 0 {
+		return false
+	}
+
+	filtered := make([]any, 0, len(tools))
+	stripped := false
+	for _, tool := range tools {
+		toolMap, ok := tool.(map[string]any)
+		if !ok {
+			filtered = append(filtered, tool)
+			continue
+		}
+		toolType, _ := toolMap["type"].(string)
+		if copilotUnsupportedToolTypes[toolType] {
+			stripped = true
+			continue
+		}
+		filtered = append(filtered, tool)
+	}
+
+	if !stripped {
+		return false
+	}
+
+	if len(filtered) == 0 {
+		delete(reqBody, "tools")
+	} else {
+		reqBody["tools"] = filtered
+	}
+	return true
+}
+
 func codexCachePath(filename string) string {
 	home, err := os.UserHomeDir()
 	if err != nil {

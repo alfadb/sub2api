@@ -943,6 +943,12 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				reqBody["service_tier"] = nil
 				bodyModified = true
 			}
+
+			// GitHub Copilot does not support certain built-in tool types (e.g. web_search).
+			// Strip them to avoid upstream 400 errors.
+			if stripUnsupportedCopilotTools(reqBody) {
+				bodyModified = true
+			}
 		}
 	}
 

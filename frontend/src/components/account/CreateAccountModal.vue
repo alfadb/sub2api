@@ -179,6 +179,19 @@
         </div>
       </div>
 
+      <!-- Provider input (only for Aggregator platform) -->
+      <div v-if="form.platform === 'aggregator'">
+        <label class="input-label">{{ t('admin.accounts.provider') }}</label>
+        <input
+          v-model="form.provider"
+          type="text"
+          required
+          class="input"
+          :placeholder="'openrouter'"
+        />
+        <p class="input-hint">{{ t('admin.accounts.providerHint') }}</p>
+      </div>
+
       <!-- Account Type Selection (Anthropic) -->
       <div v-if="form.platform === 'anthropic'">
         <label class="input-label">{{ t('admin.accounts.accountType') }}</label>
@@ -2353,6 +2366,7 @@ const form = reactive({
   name: '',
   notes: '',
   platform: 'anthropic' as AccountPlatform,
+  provider: null as string | null,
   type: 'oauth' as AccountType, // Will be 'oauth', 'setup-token', or 'apikey'
   credentials: {} as Record<string, unknown>,
   proxy_id: null as number | null,
@@ -3004,6 +3018,7 @@ const createAccountAndFinish = async (
     name: form.name,
     notes: form.notes,
     platform,
+    provider: form.platform === 'aggregator' ? form.provider : null,
     type,
     credentials,
     extra,

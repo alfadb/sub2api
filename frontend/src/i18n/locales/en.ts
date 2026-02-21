@@ -1550,6 +1550,8 @@ export default {
       setupTokenLongLived: 'Setup Token (Long-lived)',
       baseUrl: 'Base URL',
       baseUrlHint: 'Leave default for official Anthropic API',
+      provider: 'Provider',
+      providerHint: 'The aggregator platform name, e.g., openrouter, oneapi',
       apiKeyRequired: 'API Key *',
       apiKeyPlaceholder: 'sk-ant-api03-...',
       apiKeyHint: 'Your Claude Console API Key',

@@ -189,7 +189,12 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 	// Get subscription (may be nil)
 	subscription, _ := middleware.GetSubscriptionFromContext(c)
 
-	effectiveAPIKey, err := h.resolveEffectiveAPIKey(c, apiKey, modelName)
+	targetPlatform := ""
+	if fp, ok := middleware.GetForcePlatformFromContext(c); ok {
+		targetPlatform = fp
+	}
+
+	effectiveAPIKey, err := h.resolveEffectiveAPIKey(c, apiKey, modelName, targetPlatform)
 	if err != nil {
 		googleError(c, http.StatusServiceUnavailable, "No accessible groups: "+err.Error())
 		return

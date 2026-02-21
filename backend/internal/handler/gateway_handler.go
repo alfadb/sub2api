@@ -173,7 +173,12 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	// 获取订阅信息（可能为nil）- 提前获取用于后续检查
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
 
-	effectiveAPIKey, err := h.resolveEffectiveAPIKey(c, apiKey, reqModel)
+	targetPlatform := ""
+	if fp, ok := middleware2.GetForcePlatformFromContext(c); ok {
+		targetPlatform = fp
+	}
+
+	effectiveAPIKey, err := h.resolveEffectiveAPIKey(c, apiKey, reqModel, targetPlatform)
 	if err != nil {
 		h.errorResponse(c, http.StatusServiceUnavailable, "api_error", "No accessible groups: "+err.Error())
 		return
@@ -857,7 +862,7 @@ func cloneAPIKeyWithGroup(apiKey *service.APIKey, group *service.Group) *service
 	return &cloned
 }
 
-func (h *GatewayHandler) resolveEffectiveAPIKey(c *gin.Context, apiKey *service.APIKey, requestedModel string) (*service.APIKey, error) {
+func (h *GatewayHandler) resolveEffectiveAPIKey(c *gin.Context, apiKey *service.APIKey, requestedModel string, targetPlatform string) (*service.APIKey, error) {
 	if apiKey.GroupID != nil && apiKey.Group != nil {
 		return apiKey, nil
 	}
@@ -873,7 +878,7 @@ func (h *GatewayHandler) resolveEffectiveAPIKey(c *gin.Context, apiKey *service.
 		}
 	}
 
-	group, err := h.gatewayService.ResolveGroupFromUserPermission(c.Request.Context(), allowedGroups, requestedModel)
+	group, err := h.gatewayService.ResolveGroupFromUserPermission(c.Request.Context(), allowedGroups, requestedModel, targetPlatform)
 	if err != nil {
 		return nil, err
 	}
@@ -1278,7 +1283,12 @@ func (h *GatewayHandler) CountTokens(c *gin.Context) {
 
 	setOpsRequestContext(c, parsedReq.Model, parsedReq.Stream, body)
 
-	effectiveAPIKey, err := h.resolveEffectiveAPIKey(c, apiKey, parsedReq.Model)
+	targetPlatform := ""
+	if fp, ok := middleware2.GetForcePlatformFromContext(c); ok {
+		targetPlatform = fp
+	}
+
+	effectiveAPIKey, err := h.resolveEffectiveAPIKey(c, apiKey, parsedReq.Model, targetPlatform)
 	if err != nil {
 		h.errorResponse(c, http.StatusServiceUnavailable, "api_error", "No accessible groups: "+err.Error())
 		return

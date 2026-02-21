@@ -5624,7 +5624,11 @@ func (s *GatewayService) GetAccountGroupForBilling(account *Account) *Group {
 	return account.Groups[0]
 }
 
-func (s *GatewayService) ResolveGroupFromUserPermission(ctx context.Context, allowedGroups []int64, requestedModel string) (*Group, error) {
+func (s *GatewayService) ResolveGroupFromUserPermission(ctx context.Context, allowedGroups []int64, requestedModel string, targetPlatform string) (*Group, error) {
+	if targetPlatform != "" {
+		return s.resolveGroupByPlatform(ctx, nil, requestedModel, targetPlatform)
+	}
+
 	accessibleIDs, err := s.GetAccessibleGroupIDs(ctx, allowedGroups)
 	if err != nil {
 		return nil, fmt.Errorf("get accessible groups: %w", err)
@@ -5656,4 +5660,31 @@ func (s *GatewayService) ResolveGroupFromUserPermission(ctx context.Context, all
 		return nil, fmt.Errorf("get group %d: %w", accessibleIDs[0], err)
 	}
 	return group, nil
+}
+
+func (s *GatewayService) resolveGroupByPlatform(ctx context.Context, accessibleIDs []int64, requestedModel string, targetPlatform string) (*Group, error) {
+	groups, err := s.groupRepo.ListActiveByPlatform(ctx, targetPlatform)
+	if err != nil || len(groups) == 0 {
+		return nil, fmt.Errorf("no active groups for platform: %s", targetPlatform)
+	}
+
+	for i := range groups {
+		group := &groups[i]
+
+		if requestedModel != "" {
+			accounts, err := s.accountRepo.ListSchedulableByGroupID(ctx, group.ID)
+			if err != nil || len(accounts) == 0 {
+				continue
+			}
+			for _, acc := range accounts {
+				if acc.IsModelSupported(requestedModel) {
+					return group, nil
+				}
+			}
+		} else {
+			return group, nil
+		}
+	}
+
+	return nil, fmt.Errorf("no accessible groups for platform: %s with model: %s", targetPlatform, requestedModel)
 }

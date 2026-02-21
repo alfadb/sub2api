@@ -67,7 +67,7 @@ func NewOpenAIGatewayHandler(
 	}
 }
 
-func (h *OpenAIGatewayHandler) resolveEffectiveAPIKey(c *gin.Context, apiKey *service.APIKey, requestedModel string) (*service.APIKey, error) {
+func (h *OpenAIGatewayHandler) resolveEffectiveAPIKey(c *gin.Context, apiKey *service.APIKey, requestedModel string, targetPlatform string) (*service.APIKey, error) {
 	if apiKey.GroupID != nil && apiKey.Group != nil {
 		return apiKey, nil
 	}
@@ -83,7 +83,7 @@ func (h *OpenAIGatewayHandler) resolveEffectiveAPIKey(c *gin.Context, apiKey *se
 		}
 	}
 
-	group, err := h.claudeGatewayService.ResolveGroupFromUserPermission(c.Request.Context(), allowedGroups, requestedModel)
+	group, err := h.claudeGatewayService.ResolveGroupFromUserPermission(c.Request.Context(), allowedGroups, requestedModel, targetPlatform)
 	if err != nil {
 		return nil, err
 	}
@@ -211,7 +211,12 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	// Get subscription info (may be nil)
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
 
-	effectiveAPIKey, err := h.resolveEffectiveAPIKey(c, apiKey, reqModel)
+	targetPlatform := ""
+	if fp, ok := middleware2.GetForcePlatformFromContext(c); ok {
+		targetPlatform = fp
+	}
+
+	effectiveAPIKey, err := h.resolveEffectiveAPIKey(c, apiKey, reqModel, targetPlatform)
 	if err != nil {
 		h.errorResponse(c, http.StatusServiceUnavailable, "api_error", "No accessible groups: "+err.Error())
 		return
@@ -267,7 +272,6 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	// Generate session hash (header first; fallback to prompt_cache_key)
 	sessionHash := h.openaiGatewayService.GenerateSessionHash(c, reqBody)
 
-	targetPlatform := ""
 	if fp, ok := middleware2.GetForcePlatformFromContext(c); ok {
 		targetPlatform = strings.TrimSpace(fp)
 	}

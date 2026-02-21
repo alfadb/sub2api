@@ -94,6 +94,7 @@ type CreateAccountRequest struct {
 	Name                    string         `json:"name" binding:"required"`
 	Notes                   *string        `json:"notes"`
 	Platform                string         `json:"platform" binding:"required"`
+	Provider                *string        `json:"provider"` // Aggregator 平台必填
 	Type                    string         `json:"type" binding:"required,oneof=oauth setup-token apikey upstream"`
 	Credentials             map[string]any `json:"credentials" binding:"required"`
 	Extra                   map[string]any `json:"extra"`
@@ -312,6 +313,7 @@ func (h *AccountHandler) Create(c *gin.Context) {
 		Name:                  req.Name,
 		Notes:                 req.Notes,
 		Platform:              req.Platform,
+		Provider:              req.Provider,
 		Type:                  req.Type,
 		Credentials:           req.Credentials,
 		Extra:                 req.Extra,

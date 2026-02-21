@@ -93,6 +93,20 @@ func (_c *AccountCreate) SetPlatform(v string) *AccountCreate {
 	return _c
 }
 
+// SetProvider sets the "provider" field.
+func (_c *AccountCreate) SetProvider(v string) *AccountCreate {
+	_c.mutation.SetProvider(v)
+	return _c
+}
+
+// SetNillableProvider sets the "provider" field if the given value is not nil.
+func (_c *AccountCreate) SetNillableProvider(v *string) *AccountCreate {
+	if v != nil {
+		_c.SetProvider(*v)
+	}
+	return _c
+}
+
 // SetType sets the "type" field.
 func (_c *AccountCreate) SetType(v string) *AccountCreate {
 	_c.mutation.SetType(v)
@@ -486,6 +500,11 @@ func (_c *AccountCreate) check() error {
 			return &ValidationError{Name: "platform", err: fmt.Errorf(`ent: validator failed for field "Account.platform": %w`, err)}
 		}
 	}
+	if v, ok := _c.mutation.Provider(); ok {
+		if err := account.ProviderValidator(v); err != nil {
+			return &ValidationError{Name: "provider", err: fmt.Errorf(`ent: validator failed for field "Account.provider": %w`, err)}
+		}
+	}
 	if _, ok := _c.mutation.GetType(); !ok {
 		return &ValidationError{Name: "type", err: errors.New(`ent: missing required field "Account.type"`)}
 	}
@@ -578,6 +597,10 @@ func (_c *AccountCreate) createSpec() (*Account, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Platform(); ok {
 		_spec.SetField(account.FieldPlatform, field.TypeString, value)
 		_node.Platform = value
+	}
+	if value, ok := _c.mutation.Provider(); ok {
+		_spec.SetField(account.FieldProvider, field.TypeString, value)
+		_node.Provider = &value
 	}
 	if value, ok := _c.mutation.GetType(); ok {
 		_spec.SetField(account.FieldType, field.TypeString, value)
@@ -825,6 +848,24 @@ func (u *AccountUpsert) SetPlatform(v string) *AccountUpsert {
 // UpdatePlatform sets the "platform" field to the value that was provided on create.
 func (u *AccountUpsert) UpdatePlatform() *AccountUpsert {
 	u.SetExcluded(account.FieldPlatform)
+	return u
+}
+
+// SetProvider sets the "provider" field.
+func (u *AccountUpsert) SetProvider(v string) *AccountUpsert {
+	u.Set(account.FieldProvider, v)
+	return u
+}
+
+// UpdateProvider sets the "provider" field to the value that was provided on create.
+func (u *AccountUpsert) UpdateProvider() *AccountUpsert {
+	u.SetExcluded(account.FieldProvider)
+	return u
+}
+
+// ClearProvider clears the value of the "provider" field.
+func (u *AccountUpsert) ClearProvider() *AccountUpsert {
+	u.SetNull(account.FieldProvider)
 	return u
 }
 
@@ -1260,6 +1301,27 @@ func (u *AccountUpsertOne) SetPlatform(v string) *AccountUpsertOne {
 func (u *AccountUpsertOne) UpdatePlatform() *AccountUpsertOne {
 	return u.Update(func(s *AccountUpsert) {
 		s.UpdatePlatform()
+	})
+}
+
+// SetProvider sets the "provider" field.
+func (u *AccountUpsertOne) SetProvider(v string) *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetProvider(v)
+	})
+}
+
+// UpdateProvider sets the "provider" field to the value that was provided on create.
+func (u *AccountUpsertOne) UpdateProvider() *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateProvider()
+	})
+}
+
+// ClearProvider clears the value of the "provider" field.
+func (u *AccountUpsertOne) ClearProvider() *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.ClearProvider()
 	})
 }
 
@@ -1912,6 +1974,27 @@ func (u *AccountUpsertBulk) SetPlatform(v string) *AccountUpsertBulk {
 func (u *AccountUpsertBulk) UpdatePlatform() *AccountUpsertBulk {
 	return u.Update(func(s *AccountUpsert) {
 		s.UpdatePlatform()
+	})
+}
+
+// SetProvider sets the "provider" field.
+func (u *AccountUpsertBulk) SetProvider(v string) *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetProvider(v)
+	})
+}
+
+// UpdateProvider sets the "provider" field to the value that was provided on create.
+func (u *AccountUpsertBulk) UpdateProvider() *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateProvider()
+	})
+}
+
+// ClearProvider clears the value of the "provider" field.
+func (u *AccountUpsertBulk) ClearProvider() *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.ClearProvider()
 	})
 }
 

@@ -60,10 +60,18 @@ func (Account) Fields() []ent.Field {
 			Nillable().
 			SchemaType(map[string]string{dialect.Postgres: "text"}),
 
-		// platform: 所属平台，如 "claude", "gemini", "openai" 等
+		// platform: 所属平台（API 协议类型），如 "anthropic", "openai", "gemini", "aggregator" 等
 		field.String("platform").
 			MaxLen(50).
 			NotEmpty(),
+
+		// provider: 实际服务提供者，如 "anthropic", "openai", "openrouter" 等
+		// 主要用于 Aggregator 平台区分不同的第三方聚合平台
+		// 当 platform = "aggregator" 时，此字段标识具体是哪个聚合平台（如 "openrouter", "oneapi"）
+		field.String("provider").
+			MaxLen(50).
+			Optional().
+			Nillable(),
 
 		// type: 认证类型，如 "api_key", "oauth", "cookie" 等
 		// 不同类型决定了 credentials 中存储的数据结构
@@ -204,6 +212,7 @@ func (Account) Edges() []ent.Edge {
 func (Account) Indexes() []ent.Index {
 	return []ent.Index{
 		index.Fields("platform"),            // 按平台筛选
+		index.Fields("provider"),            // 按服务提供者筛选
 		index.Fields("type"),                // 按认证类型筛选
 		index.Fields("status"),              // 按状态筛选
 		index.Fields("proxy_id"),            // 按代理筛选

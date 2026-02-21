@@ -161,6 +161,7 @@ type CreateAccountInput struct {
 	Name               string
 	Notes              *string
 	Platform           string
+	Provider           *string // 实际服务提供者（Aggregator 平台时必填）
 	Type               string
 	Credentials        map[string]any
 	Extra              map[string]any
@@ -1066,12 +1067,21 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 	if input == nil {
 		return nil, errors.New("input is required")
 	}
-	if strings.TrimSpace(input.Platform) == PlatformAggregator && (input.Type == AccountTypeAPIKey || input.Type == AccountTypeUpstream) {
-		if credentialString(input.Credentials, "base_url") == "" {
-			return nil, errors.New("base_url is required for aggregator accounts")
+
+	// Aggregator 平台校验
+	if strings.TrimSpace(input.Platform) == PlatformAggregator {
+		// provider 必填
+		if input.Provider == nil || strings.TrimSpace(*input.Provider) == "" {
+			return nil, errors.New("provider is required for aggregator accounts")
 		}
-		if credentialString(input.Credentials, "api_key") == "" {
-			return nil, errors.New("api_key is required for aggregator accounts")
+		// apikey/upstream 类型需要 base_url 和 api_key
+		if input.Type == AccountTypeAPIKey || input.Type == AccountTypeUpstream {
+			if credentialString(input.Credentials, "base_url") == "" {
+				return nil, errors.New("base_url is required for aggregator accounts")
+			}
+			if credentialString(input.Credentials, "api_key") == "" {
+				return nil, errors.New("api_key is required for aggregator accounts")
+			}
 		}
 	}
 
@@ -1102,6 +1112,7 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 		Name:        input.Name,
 		Notes:       normalizeAccountNotes(input.Notes),
 		Platform:    input.Platform,
+		Provider:    input.Provider,
 		Type:        input.Type,
 		Credentials: input.Credentials,
 		Extra:       input.Extra,

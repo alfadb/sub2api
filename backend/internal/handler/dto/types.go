@@ -103,6 +103,7 @@ type Account struct {
 	Name               string         `json:"name"`
 	Notes              *string        `json:"notes"`
 	Platform           string         `json:"platform"`
+	Provider           *string        `json:"provider"`
 	Type               string         `json:"type"`
 	Credentials        map[string]any `json:"credentials"`
 	Extra              map[string]any `json:"extra"`

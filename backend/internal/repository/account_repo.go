@@ -76,6 +76,7 @@ func (r *accountRepository) Create(ctx context.Context, account *service.Account
 		SetName(account.Name).
 		SetNillableNotes(account.Notes).
 		SetPlatform(account.Platform).
+		SetNillableProvider(account.Provider).
 		SetType(account.Type).
 		SetCredentials(normalizeJSONMap(account.Credentials)).
 		SetExtra(normalizeJSONMap(account.Extra)).
@@ -1576,6 +1577,7 @@ func accountEntityToService(m *dbent.Account) *service.Account {
 		Name:                m.Name,
 		Notes:               m.Notes,
 		Platform:            m.Platform,
+		Provider:            m.Provider,
 		Type:                m.Type,
 		Credentials:         copyJSONMap(m.Credentials),
 		Extra:               copyJSONMap(m.Extra),

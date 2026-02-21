@@ -564,6 +564,7 @@ export interface Account {
   name: string
   notes?: string | null
   platform: AccountPlatform
+  provider?: string | null
   type: AccountType
   credentials?: Record<string, unknown>
   // Extra fields including Codex usage and model-level rate limits (Antigravity smart retry)
@@ -688,6 +689,7 @@ export interface CreateAccountRequest {
   name: string
   notes?: string | null
   platform: AccountPlatform
+  provider?: string | null
   type: AccountType
   credentials: Record<string, unknown>
   extra?: Record<string, unknown>

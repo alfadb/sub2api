@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -23,55 +24,27 @@ const (
 //go:embed prompts/codex_cli_instructions.md
 var codexCLIInstructions string
 
-var codexModelMap = map[string]string{
-	"gpt-5.3":                   "gpt-5.3",
-	"gpt-5.3-none":              "gpt-5.3",
-	"gpt-5.3-low":               "gpt-5.3",
-	"gpt-5.3-medium":            "gpt-5.3",
-	"gpt-5.3-high":              "gpt-5.3",
-	"gpt-5.3-xhigh":             "gpt-5.3",
-	"gpt-5.3-codex":             "gpt-5.3-codex",
-	"gpt-5.3-codex-low":         "gpt-5.3-codex",
-	"gpt-5.3-codex-medium":      "gpt-5.3-codex",
-	"gpt-5.3-codex-high":        "gpt-5.3-codex",
-	"gpt-5.3-codex-xhigh":       "gpt-5.3-codex",
-	"gpt-5.1-codex":             "gpt-5.1-codex",
-	"gpt-5.1-codex-low":         "gpt-5.1-codex",
-	"gpt-5.1-codex-medium":      "gpt-5.1-codex",
-	"gpt-5.1-codex-high":        "gpt-5.1-codex",
-	"gpt-5.1-codex-max":         "gpt-5.1-codex-max",
-	"gpt-5.1-codex-max-low":     "gpt-5.1-codex-max",
-	"gpt-5.1-codex-max-medium":  "gpt-5.1-codex-max",
-	"gpt-5.1-codex-max-high":    "gpt-5.1-codex-max",
-	"gpt-5.1-codex-max-xhigh":   "gpt-5.1-codex-max",
-	"gpt-5.2":                   "gpt-5.2",
-	"gpt-5.2-none":              "gpt-5.2",
-	"gpt-5.2-low":               "gpt-5.2",
-	"gpt-5.2-medium":            "gpt-5.2",
-	"gpt-5.2-high":              "gpt-5.2",
-	"gpt-5.2-xhigh":             "gpt-5.2",
-	"gpt-5.2-codex":             "gpt-5.2-codex",
-	"gpt-5.2-codex-low":         "gpt-5.2-codex",
-	"gpt-5.2-codex-medium":      "gpt-5.2-codex",
-	"gpt-5.2-codex-high":        "gpt-5.2-codex",
-	"gpt-5.2-codex-xhigh":       "gpt-5.2-codex",
-	"gpt-5.1-codex-mini":        "gpt-5.1-codex-mini",
-	"gpt-5.1-codex-mini-medium": "gpt-5.1-codex-mini",
-	"gpt-5.1-codex-mini-high":   "gpt-5.1-codex-mini",
-	"gpt-5.1":                   "gpt-5.1",
-	"gpt-5.1-none":              "gpt-5.1",
-	"gpt-5.1-low":               "gpt-5.1",
-	"gpt-5.1-medium":            "gpt-5.1",
-	"gpt-5.1-high":              "gpt-5.1",
-	"gpt-5.1-chat-latest":       "gpt-5.1",
-	"gpt-5-codex":               "gpt-5.1-codex",
-	"codex-mini-latest":         "gpt-5.1-codex-mini",
-	"gpt-5-codex-mini":          "gpt-5.1-codex-mini",
-	"gpt-5-codex-mini-medium":   "gpt-5.1-codex-mini",
-	"gpt-5-codex-mini-high":     "gpt-5.1-codex-mini",
-	"gpt-5":                     "gpt-5.1",
-	"gpt-5-mini":                "gpt-5.1",
-	"gpt-5-nano":                "gpt-5.1",
+// 模型规范化模式（基于模式匹配，而非穷举）
+var (
+	// reasoning 后缀模式：-none, -low, -medium, -high, -xhigh
+	reasoningSuffixPattern = regexp.MustCompile(`-(none|low|medium|high|xhigh)$`)
+	// 日期版本模式：-2025-12-11
+	dateVersionPattern = regexp.MustCompile(`-\d{4}-\d{2}-\d{2}$`)
+	// chat-latest 后缀
+	chatLatestPattern = regexp.MustCompile(`-chat-latest$`)
+)
+
+// codexModelAlias 定义需要特殊处理的模型别名
+// key: 原始模型名, value: 规范化后的模型名
+var codexModelAlias = map[string]string{
+	// gpt-5 → gpt-5.1（旧版本升级）
+	"gpt-5":            "gpt-5.1",
+	"gpt-5-mini":       "gpt-5.1",
+	"gpt-5-nano":       "gpt-5.1",
+	"gpt-5-codex":      "gpt-5.1-codex",
+	"gpt-5-codex-mini": "gpt-5.1-codex-mini",
+	// 特殊别名
+	"codex-mini-latest": "gpt-5.1-codex-mini",
 }
 
 type codexTransformResult struct {
@@ -164,45 +137,58 @@ func normalizeCodexModel(model string) string {
 		modelID = parts[len(parts)-1]
 	}
 
-	if mapped := getNormalizedCodexModel(modelID); mapped != "" {
-		return mapped
+	normalized := strings.ToLower(strings.TrimSpace(modelID))
+	normalized = strings.ReplaceAll(normalized, " ", "-")
+
+	// 1. 检查特殊别名映射
+	if alias, ok := codexModelAlias[normalized]; ok {
+		return alias
 	}
 
-	normalized := strings.ToLower(modelID)
+	// 2. 移除 reasoning 后缀
+	normalized = reasoningSuffixPattern.ReplaceAllString(normalized, "")
 
-	if strings.Contains(normalized, "gpt-5.2-codex") || strings.Contains(normalized, "gpt 5.2 codex") {
+	// 3. 移除日期版本后缀
+	normalized = dateVersionPattern.ReplaceAllString(normalized, "")
+
+	// 4. 移除 chat-latest 后缀
+	normalized = chatLatestPattern.ReplaceAllString(normalized, "")
+
+	// 5. 再次检查别名映射（处理移除后缀后的情况）
+	if alias, ok := codexModelAlias[normalized]; ok {
+		return alias
+	}
+
+	// 6. 验证是否为有效的 GPT-5.x 模型格式
+	// 支持的格式: gpt-5.1, gpt-5.1-codex, gpt-5.1-codex-max, gpt-5.1-codex-mini, gpt-5.2, gpt-5.2-codex
+	validModelPattern := regexp.MustCompile(`^gpt-5\.[12](-codex(-max|-mini)?)?$`)
+	if validModelPattern.MatchString(normalized) {
+		return normalized
+	}
+
+	// 7. 模糊匹配逻辑
+	if strings.Contains(normalized, "gpt-5.2-codex") {
 		return "gpt-5.2-codex"
 	}
-	if strings.Contains(normalized, "gpt-5.2") || strings.Contains(normalized, "gpt 5.2") {
+	if strings.Contains(normalized, "gpt-5.2") {
 		return "gpt-5.2"
 	}
-	if strings.Contains(normalized, "gpt-5.3-codex") || strings.Contains(normalized, "gpt 5.3 codex") {
-		return "gpt-5.3-codex"
-	}
-	if strings.Contains(normalized, "gpt-5.3") || strings.Contains(normalized, "gpt 5.3") {
-		return "gpt-5.3"
-	}
-	if strings.Contains(normalized, "gpt-5.1-codex-max") || strings.Contains(normalized, "gpt 5.1 codex max") {
+	if strings.Contains(normalized, "gpt-5.1-codex-max") {
 		return "gpt-5.1-codex-max"
 	}
-	if strings.Contains(normalized, "gpt-5.1-codex-mini") || strings.Contains(normalized, "gpt 5.1 codex mini") {
+	if strings.Contains(normalized, "gpt-5.1-codex-mini") {
 		return "gpt-5.1-codex-mini"
 	}
-	if strings.Contains(normalized, "codex-mini-latest") ||
-		strings.Contains(normalized, "gpt-5-codex-mini") ||
-		strings.Contains(normalized, "gpt 5 codex mini") {
-		return "codex-mini-latest"
-	}
-	if strings.Contains(normalized, "gpt-5.1-codex") || strings.Contains(normalized, "gpt 5.1 codex") {
+	if strings.Contains(normalized, "gpt-5.1-codex") {
 		return "gpt-5.1-codex"
 	}
-	if strings.Contains(normalized, "gpt-5.1") || strings.Contains(normalized, "gpt 5.1") {
+	if strings.Contains(normalized, "gpt-5.1") {
 		return "gpt-5.1"
 	}
 	if strings.Contains(normalized, "codex") {
 		return "gpt-5.1-codex"
 	}
-	if strings.Contains(normalized, "gpt-5") || strings.Contains(normalized, "gpt 5") {
+	if strings.Contains(normalized, "gpt-5") {
 		return "gpt-5.1"
 	}
 
@@ -213,14 +199,13 @@ func getNormalizedCodexModel(modelID string) string {
 	if modelID == "" {
 		return ""
 	}
-	if mapped, ok := codexModelMap[modelID]; ok {
+	// 检查别名映射
+	if mapped, ok := codexModelAlias[modelID]; ok {
 		return mapped
 	}
 	lower := strings.ToLower(modelID)
-	for key, value := range codexModelMap {
-		if strings.ToLower(key) == lower {
-			return value
-		}
+	if mapped, ok := codexModelAlias[lower]; ok {
+		return mapped
 	}
 	return ""
 }

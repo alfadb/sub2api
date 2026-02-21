@@ -176,18 +176,37 @@ func TestApplyCodexOAuthTransform_EmptyInput(t *testing.T) {
 	require.Len(t, input, 0)
 }
 
-func TestNormalizeCodexModel_Gpt53(t *testing.T) {
+func TestNormalizeCodexModel_PatternMatching(t *testing.T) {
 	cases := map[string]string{
-		"gpt-5.3":             "gpt-5.3",
-		"gpt-5.3-codex":       "gpt-5.3-codex",
-		"gpt-5.3-codex-xhigh": "gpt-5.3-codex",
-		"gpt 5.3 codex":       "gpt-5.3-codex",
+		// gpt-5.2 系列 - reasoning 后缀移除
+		"gpt-5.2":            "gpt-5.2",
+		"gpt-5.2-low":        "gpt-5.2",
+		"gpt-5.2-medium":     "gpt-5.2",
+		"gpt-5.2-high":       "gpt-5.2",
+		"gpt-5.2-xhigh":      "gpt-5.2",
+		"gpt-5.2-codex":      "gpt-5.2-codex",
+		"gpt-5.2-codex-low":  "gpt-5.2-codex",
+		"gpt-5.2-codex-high": "gpt-5.2-codex",
+		"gpt 5.2 codex":      "gpt-5.2-codex",
+		// gpt-5.1 系列
+		"gpt-5.1":             "gpt-5.1",
+		"gpt-5.1-none":        "gpt-5.1",
+		"gpt-5.1-codex":       "gpt-5.1-codex",
+		"gpt-5.1-codex-max":   "gpt-5.1-codex-max",
+		"gpt-5.1-codex-mini":  "gpt-5.1-codex-mini",
+		"gpt-5.1-chat-latest": "gpt-5.1",
+		// gpt-5 别名
+		"gpt-5":             "gpt-5.1",
+		"gpt-5-codex":       "gpt-5.1-codex",
+		"gpt-5-codex-mini":  "gpt-5.1-codex-mini",
+		"codex-mini-latest": "gpt-5.1-codex-mini",
+		// 日期版本移除
+		"gpt-5.2-2025-12-11": "gpt-5.2",
 	}
 
 	for input, expected := range cases {
-		require.Equal(t, expected, normalizeCodexModel(input))
+		require.Equal(t, expected, normalizeCodexModel(input), "input: %s", input)
 	}
-
 }
 
 func TestApplyCodexOAuthTransform_CodexCLI_PreservesExistingInstructions(t *testing.T) {

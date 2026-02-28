@@ -141,6 +141,10 @@ type UsageInfo struct {
 
 	// Antigravity 多模型配额
 	AntigravityQuota map[string]*AntigravityModelQuota `json:"antigravity_quota,omitempty"`
+
+	// Copilot 本地用量统计（基于 usage_logs，无公开 API）
+	CopilotDaily   *UsageProgress `json:"copilot_daily,omitempty"`
+	CopilotMonthly *UsageProgress `json:"copilot_monthly,omitempty"`
 }
 
 // ClaudeUsageResponse Anthropic API返回的usage结构
@@ -175,11 +179,52 @@ type ClaudeUsageFetcher interface {
 	FetchUsageWithOptions(ctx context.Context, opts *ClaudeUsageFetchOptions) (*ClaudeUsageResponse, error)
 }
 
+// CopilotQuotaDetail GitHub Copilot 单个配额详情
+// 注意：GitHub API 返回的数字字段可能是浮点数（如 0.0），所以使用 float64
+type CopilotQuotaDetail struct {
+	Entitlement      float64 `json:"entitlement"`
+	OverageCount     float64 `json:"overage_count"`
+	OveragePermitted bool    `json:"overage_permitted"`
+	PercentRemaining float64 `json:"percent_remaining"`
+	QuotaID          string  `json:"quota_id"`
+	QuotaRemaining   float64 `json:"quota_remaining"`
+	Remaining        float64 `json:"remaining"`
+	Unlimited        bool    `json:"unlimited"`
+}
+
+// CopilotQuotaSnapshots GitHub Copilot 配额快照
+type CopilotQuotaSnapshots struct {
+	Chat                CopilotQuotaDetail `json:"chat"`
+	Completions         CopilotQuotaDetail `json:"completions"`
+	PremiumInteractions CopilotQuotaDetail `json:"premium_interactions"`
+}
+
+// CopilotUsageResponse GitHub Copilot Usage API 响应
+type CopilotUsageResponse struct {
+	AccessTypeSKU         string                `json:"access_type_sku"`
+	AnalyticsTrackingID   string                `json:"analytics_tracking_id"`
+	AssignedDate          string                `json:"assigned_date"`
+	CanSignupForLimited   bool                  `json:"can_signup_for_limited"`
+	ChatEnabled           bool                  `json:"chat_enabled"`
+	CopilotPlan           string                `json:"copilot_plan"`
+	OrganizationLoginList []any                 `json:"organization_login_list"`
+	OrganizationList      []any                 `json:"organization_list"`
+	QuotaResetDate        string                `json:"quota_reset_date"`
+	QuotaResetDateUTC     string                `json:"quota_reset_date_utc"`
+	QuotaSnapshots        CopilotQuotaSnapshots `json:"quota_snapshots"`
+}
+
+// CopilotUsageFetcher fetches usage data from GitHub Copilot API
+type CopilotUsageFetcher interface {
+	FetchUsage(ctx context.Context, accessToken, proxyURL string, accountID int64) (*CopilotUsageResponse, error)
+}
+
 // AccountUsageService 账号使用量查询服务
 type AccountUsageService struct {
 	accountRepo             AccountRepository
 	usageLogRepo            UsageLogRepository
 	usageFetcher            ClaudeUsageFetcher
+	copilotUsageFetcher     CopilotUsageFetcher
 	geminiQuotaService      *GeminiQuotaService
 	antigravityQuotaFetcher *AntigravityQuotaFetcher
 	cache                   *UsageCache
@@ -191,6 +236,7 @@ func NewAccountUsageService(
 	accountRepo AccountRepository,
 	usageLogRepo UsageLogRepository,
 	usageFetcher ClaudeUsageFetcher,
+	copilotUsageFetcher CopilotUsageFetcher,
 	geminiQuotaService *GeminiQuotaService,
 	antigravityQuotaFetcher *AntigravityQuotaFetcher,
 	cache *UsageCache,
@@ -200,6 +246,7 @@ func NewAccountUsageService(
 		accountRepo:             accountRepo,
 		usageLogRepo:            usageLogRepo,
 		usageFetcher:            usageFetcher,
+		copilotUsageFetcher:     copilotUsageFetcher,
 		geminiQuotaService:      geminiQuotaService,
 		antigravityQuotaFetcher: antigravityQuotaFetcher,
 		cache:                   cache,
@@ -219,6 +266,15 @@ func (s *AccountUsageService) GetUsage(ctx context.Context, accountID int64) (*U
 
 	if account.Platform == PlatformGemini {
 		usage, err := s.getGeminiUsage(ctx, account)
+		if err == nil {
+			s.tryClearRecoverableAccountError(ctx, account)
+		}
+		return usage, err
+	}
+
+	// Copilot 平台：基于本地 usage_logs 计算用量（GitHub Copilot 没有公开的 usage API）
+	if account.Platform == PlatformCopilot {
+		usage, err := s.getCopilotUsage(ctx, account)
 		if err == nil {
 			s.tryClearRecoverableAccountError(ctx, account)
 		}
@@ -644,4 +700,178 @@ func buildGeminiUsageProgress(used, limit int64, resetAt time.Time, tokens int64
 // 用于账号列表页面显示当前窗口费用
 func (s *AccountUsageService) GetAccountWindowStats(ctx context.Context, accountID int64, startTime time.Time) (*usagestats.AccountStats, error) {
 	return s.usageLogRepo.GetAccountWindowStats(ctx, accountID, startTime)
+}
+
+// getCopilotUsage 获取 Copilot 账户用量统计
+// 优先使用 GitHub Copilot Usage API，失败时回退到本地 usage_logs 表计算
+func (s *AccountUsageService) getCopilotUsage(ctx context.Context, account *Account) (*UsageInfo, error) {
+	now := time.Now()
+	usage := &UsageInfo{
+		UpdatedAt: &now,
+	}
+
+	// 获取 access_token
+	tokenProvider := NewCopilotTokenProvider()
+	accessToken, err := tokenProvider.GetAccessToken(ctx, account)
+	if err != nil {
+		log.Printf("Failed to get copilot access token for account %d: %v", account.ID, err)
+		return s.getCopilotLocalUsage(ctx, account, now)
+	}
+
+	// 获取代理 URL
+	var proxyURL string
+	if account.ProxyID != nil && account.Proxy != nil {
+		proxyURL = account.Proxy.URL()
+	}
+
+	// 调用 Copilot Usage API
+	if s.copilotUsageFetcher != nil {
+		apiResp, err := s.copilotUsageFetcher.FetchUsage(ctx, accessToken, proxyURL, account.ID)
+		if err != nil {
+			log.Printf("Failed to fetch copilot usage API for account %d: %v", account.ID, err)
+			return s.getCopilotLocalUsage(ctx, account, now)
+		}
+
+		// DEBUG: 记录 API 响应原始数据
+		quota := apiResp.QuotaSnapshots.Chat
+		premiumQuota := apiResp.QuotaSnapshots.PremiumInteractions
+		log.Printf("[DEBUG] Copilot API response for account %d: quota_reset_date=%s, plan=%s",
+			account.ID, apiResp.QuotaResetDate, apiResp.CopilotPlan)
+		log.Printf("[DEBUG] Chat quota: entitlement=%.0f, remaining=%.0f, percent_remaining=%.2f, unlimited=%v",
+			quota.Entitlement, quota.QuotaRemaining, quota.PercentRemaining, quota.Unlimited)
+		log.Printf("[DEBUG] Premium quota: entitlement=%.0f, remaining=%.0f, percent_remaining=%.2f, unlimited=%v",
+			premiumQuota.Entitlement, premiumQuota.QuotaRemaining, premiumQuota.PercentRemaining, premiumQuota.Unlimited)
+
+		// 解析 quota_reset_date（优先使用 UTC 格式，回退到日期格式）
+		var resetAt time.Time
+		var parseErr error
+		if apiResp.QuotaResetDateUTC != "" {
+			resetAt, parseErr = time.Parse(time.RFC3339Nano, apiResp.QuotaResetDateUTC)
+		}
+		if parseErr != nil || apiResp.QuotaResetDateUTC == "" {
+			if apiResp.QuotaResetDate != "" {
+				resetAt, parseErr = time.Parse("2006-01-02", apiResp.QuotaResetDate)
+				// 如果解析成功，设置时间为当天的 23:59:59 UTC（月末最后一天）
+				if parseErr == nil {
+					resetAt = time.Date(resetAt.Year(), resetAt.Month(), resetAt.Day(), 23, 59, 59, 0, time.UTC)
+				}
+			}
+		}
+
+		if parseErr != nil {
+			log.Printf("[ERROR] Failed to parse quota_reset_date='%s', quota_reset_date_utc='%s': %v",
+				apiResp.QuotaResetDate, apiResp.QuotaResetDateUTC, parseErr)
+			// 解析失败，回退到本地统计
+			return s.addCopilotLocalUsage(ctx, account, now, usage)
+		}
+
+		if !resetAt.IsZero() {
+			// 优先使用 premium_interactions 配额（Copilot 的主要计费指标）
+			// 如果 premium_interactions 没有数据，则回退到 chat 配额
+			effectiveQuota := apiResp.QuotaSnapshots.PremiumInteractions
+			if effectiveQuota.Entitlement == 0 && effectiveQuota.QuotaRemaining == 0 {
+				log.Printf("[DEBUG] Premium quota is empty, falling back to chat quota")
+				effectiveQuota = apiResp.QuotaSnapshots.Chat
+			}
+
+			// 计算 utilization：优先使用 PercentRemaining，如果没有则用 Entitlement 计算
+			utilization := 100.0 - effectiveQuota.PercentRemaining
+			if effectiveQuota.Unlimited {
+				utilization = 0
+			} else if effectiveQuota.Entitlement == 0 && effectiveQuota.PercentRemaining == 100 {
+				// Entitlement=0 且 PercentRemaining=100，说明 API 未返回有效配额数据
+				// 保持 utilization=0（默认值），前端会显示为无配额信息
+				utilization = 0
+			}
+
+			usedReqs := int64(0)
+			if effectiveQuota.Entitlement > 0 {
+				usedReqs = int64(effectiveQuota.Entitlement - effectiveQuota.QuotaRemaining)
+			}
+
+			log.Printf("[DEBUG] Copilot usage calculated for account %d: utilization=%.2f%%, used=%d, limit=%.0f",
+				account.ID, utilization, usedReqs, effectiveQuota.Entitlement)
+
+			// Copilot API 返回的是月度配额，应该放入 CopilotMonthly
+			usage.CopilotMonthly = &UsageProgress{
+				Utilization:      utilization,
+				ResetsAt:         &resetAt,
+				RemainingSeconds: int(time.Until(resetAt).Seconds()),
+				UsedRequests:     usedReqs,
+				LimitRequests:    int64(effectiveQuota.Entitlement),
+			}
+		} else {
+			log.Printf("[ERROR] Failed to parse quota_reset_date for account %d: %v", account.ID, parseErr)
+		}
+	} else {
+		log.Printf("[WARN] copilotUsageFetcher is nil for account %d", account.ID)
+	}
+
+	// 添加本地统计（即使 API 成功也获取本地数据）
+	return s.addCopilotLocalUsage(ctx, account, now, usage)
+}
+
+// getCopilotLocalUsage 回退到本地 usage_logs 表计算
+func (s *AccountUsageService) getCopilotLocalUsage(ctx context.Context, account *Account, now time.Time) (*UsageInfo, error) {
+	usage := &UsageInfo{
+		UpdatedAt: &now,
+	}
+	return s.addCopilotLocalUsage(ctx, account, now, usage)
+}
+
+// addCopilotLocalUsage 添加本地统计信息到 UsageInfo
+func (s *AccountUsageService) addCopilotLocalUsage(ctx context.Context, account *Account, now time.Time, usage *UsageInfo) (*UsageInfo, error) {
+	if s.usageLogRepo == nil {
+		return usage, nil
+	}
+
+	// 计算时间窗口（使用 UTC 时间）
+	// Copilot 只有月度配额，没有每日配额，不设置 CopilotDaily
+	// 本地每日统计暂不展示（后续可考虑在详情页展示）
+	monthStart := copilotMonthlyWindowStart(now)
+
+	// 获取本月统计（仅在 API 未设置 CopilotMonthly 时才使用本地统计）
+	if usage.CopilotMonthly == nil {
+		monthStats, err := s.usageLogRepo.GetAccountStatsAggregated(ctx, account.ID, monthStart, now)
+		if err != nil {
+			log.Printf("Failed to get copilot month stats for account %d: %v", account.ID, err)
+		} else if monthStats != nil {
+			monthResetAt := copilotMonthlyResetTime(now)
+			accountCost := 0.0
+			if monthStats.TotalAccountCost != nil {
+				accountCost = *monthStats.TotalAccountCost
+			}
+			usage.CopilotMonthly = &UsageProgress{
+				WindowStats: &WindowStats{
+					Requests:     monthStats.TotalRequests,
+					Tokens:       monthStats.TotalTokens,
+					Cost:         accountCost,
+					StandardCost: monthStats.TotalCost,
+					UserCost:     monthStats.TotalActualCost,
+				},
+				ResetsAt:         &monthResetAt,
+				RemainingSeconds: int(time.Until(monthResetAt).Seconds()),
+			}
+		}
+	}
+	// 注意：如果 API 已经设置了 CopilotMonthly，不覆盖它，也不添加 WindowStats
+	// 因为 API 返回的配额信息（UsedRequests/LimitRequests）已经足够显示
+
+	return usage, nil
+}
+
+// copilotMonthlyWindowStart 返回 Copilot 每月窗口的开始时间（UTC 每月1日 00:00:00）
+func copilotMonthlyWindowStart(now time.Time) time.Time {
+	return time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+}
+
+// copilotMonthlyResetTime 返回 Copilot 每月重置时间（下个月1日 00:00:00 UTC）
+func copilotMonthlyResetTime(now time.Time) time.Time {
+	year := now.Year()
+	month := now.Month() + 1
+	if month > 12 {
+		month = 1
+		year++
+	}
+	return time.Date(year, month, 1, 0, 0, 0, 0, time.UTC)
 }

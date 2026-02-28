@@ -344,3 +344,33 @@ func nextBackoff(current time.Duration) time.Duration {
 	}
 	return jittered
 }
+
+// applyFailoverPassthroughRule checks error passthrough rules against the failover error.
+// Returns (status, errType, errMsg, matched). If matched, also sets OpsSkipPassthroughKey if needed.
+func applyFailoverPassthroughRule(
+	c *gin.Context,
+	svc *service.ErrorPassthroughService,
+	platform string,
+	failoverErr *service.UpstreamFailoverError,
+) (status int, errType string, errMsg string, matched bool) {
+	if svc == nil || len(failoverErr.ResponseBody) == 0 {
+		return 0, "", "", false
+	}
+	rule := svc.MatchRule(platform, failoverErr.StatusCode, failoverErr.ResponseBody)
+	if rule == nil {
+		return 0, "", "", false
+	}
+
+	status = failoverErr.StatusCode
+	if !rule.PassthroughCode && rule.ResponseCode != nil {
+		status = *rule.ResponseCode
+	}
+	errMsg = service.ExtractUpstreamErrorMessage(failoverErr.ResponseBody)
+	if !rule.PassthroughBody && rule.CustomMessage != nil {
+		errMsg = *rule.CustomMessage
+	}
+	if rule.SkipMonitoring {
+		c.Set(service.OpsSkipPassthroughKey, true)
+	}
+	return status, "upstream_error", errMsg, true
+}

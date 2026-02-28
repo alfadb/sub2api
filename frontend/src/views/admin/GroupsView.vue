@@ -82,13 +82,7 @@
             <span
               :class="[
                 'inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium',
-                value === 'anthropic'
-                  ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'
-                  : value === 'openai'
-                    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
-                    : value === 'antigravity'
-                      ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
-                      : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
+                platformBadgeClass[value] || platformBadgeClass._default
               ]"
             >
               <PlatformIcon :platform="value" size="xs" />
@@ -1718,12 +1712,23 @@ const exclusiveOptions = computed(() => [
   { value: 'false', label: t('admin.groups.nonExclusive') }
 ])
 
+const platformBadgeClass: Record<string, string> = {
+  anthropic: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400',
+  openai: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
+  gemini: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+  antigravity: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400',
+  copilot: 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400',
+  sora: 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-400',
+  _default: 'bg-gray-100 text-gray-700 dark:bg-gray-900/30 dark:text-gray-400'
+}
+
 const platformOptions = computed(() => [
   { value: 'anthropic', label: 'Anthropic' },
   { value: 'openai', label: 'OpenAI' },
   { value: 'gemini', label: 'Gemini' },
   { value: 'antigravity', label: 'Antigravity' },
-  { value: 'sora', label: 'Sora' }
+  { value: 'sora', label: 'Sora' },
+  { value: 'copilot', label: 'Copilot' }
 ])
 
 const platformFilterOptions = computed(() => [
@@ -1732,7 +1737,8 @@ const platformFilterOptions = computed(() => [
   { value: 'openai', label: 'OpenAI' },
   { value: 'gemini', label: 'Gemini' },
   { value: 'antigravity', label: 'Antigravity' },
-  { value: 'sora', label: 'Sora' }
+  { value: 'sora', label: 'Sora' },
+  { value: 'copilot', label: 'Copilot' }
 ])
 
 const editStatusOptions = computed(() => [

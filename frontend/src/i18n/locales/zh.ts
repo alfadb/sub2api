@@ -1168,7 +1168,8 @@ export default {
         openai: 'OpenAI',
         gemini: 'Gemini',
         antigravity: 'Antigravity',
-        sora: 'Sora'
+        sora: 'Sora',
+        copilot: 'Copilot'
       },
       saving: '保存中...',
       noGroups: '暂无分组',
@@ -1502,7 +1503,8 @@ export default {
         anthropic: 'Anthropic',
         gemini: 'Gemini',
         antigravity: 'Antigravity',
-        sora: 'Sora'
+        sora: 'Sora',
+        copilot: 'Copilot'
       },
       types: {
         oauth: 'OAuth',
@@ -1969,6 +1971,25 @@ export default {
           validateAndCreate: '验证并创建账号',
           pleaseEnterRefreshToken: '请输入 Refresh Token',
           failedToValidateRT: '验证 Refresh Token 失败'
+        },
+        // Copilot specific (Device Code Flow)
+        copilot: {
+          title: 'GitHub Copilot 授权',
+          deviceCodeTitle: 'GitHub Device Code',
+          deviceCodeDesc: '通过 GitHub OAuth 授权连接 Copilot',
+          connectButton: '连接 GitHub Copilot',
+          startingFlow: '正在发起 Device Code Flow...',
+          failedToStartFlow: '发起 GitHub Device Code Flow 失败',
+          enterCodePrompt: '请在 GitHub 上输入以下代码完成授权：',
+          openGitHub: '打开 GitHub 授权',
+          copyCode: '复制代码',
+          codeCopied: '代码已复制到剪贴板',
+          waitingForAuth: '等待授权中...',
+          waitingForAuthDesc: '请在浏览器中完成授权，此页面将自动更新。',
+          codeExpired: '授权代码已过期，请重试。',
+          authFailed: 'GitHub 授权失败',
+          authSuccess: 'GitHub Copilot 授权成功',
+          accountCreated: 'Copilot 账号创建成功'
         }
       },
       // Gemini specific (platform-wide)

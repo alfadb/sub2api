@@ -311,6 +311,13 @@ const loadAvailableModels = async () => {
           availableModels.value.find((m) => m.id === 'gemini-3-flash-preview') ||
           availableModels.value.find((m) => m.id === 'gemini-3-pro-preview')
         selectedModelId.value = preferred?.id || availableModels.value[0].id
+      } else if (props.account.platform === 'copilot') {
+        // Prefer claude-sonnet, then any sonnet, then first model
+        const preferred =
+          availableModels.value.find((m) => m.id.includes('claude') && m.id.includes('sonnet')) ||
+          availableModels.value.find((m) => m.id.includes('sonnet')) ||
+          availableModels.value.find((m) => m.id.includes('claude'))
+        selectedModelId.value = preferred?.id || availableModels.value[0].id
       } else {
         // Try to select Sonnet as default, otherwise use first model
         const sonnetModel = availableModels.value.find((m) => m.id.includes('sonnet'))

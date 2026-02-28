@@ -169,6 +169,19 @@
             <Icon name="cloud" size="sm" />
             Antigravity
           </button>
+          <button
+            type="button"
+            @click="form.platform = 'copilot'"
+            :class="[
+              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
+              form.platform === 'copilot'
+                ? 'bg-white text-violet-600 shadow-sm dark:bg-dark-600 dark:text-violet-400'
+                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
+            ]"
+          >
+            <PlatformIcon platform="copilot" size="sm" />
+            Copilot
+          </button>
         </div>
       </div>
 
@@ -199,6 +212,38 @@
             <div>
               <span class="block text-sm font-medium text-gray-900 dark:text-white">OAuth</span>
               <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.types.chatgptOauth') }}</span>
+            </div>
+          </button>
+        </div>
+      </div>
+
+      <!-- Account Type Selection (Copilot) -->
+      <div v-if="form.platform === 'copilot'">
+        <label class="input-label">{{ t('admin.accounts.accountType') }}</label>
+        <div class="mt-2 grid grid-cols-1 gap-3" data-tour="account-form-type">
+          <button
+            type="button"
+            @click="accountCategory = 'oauth-based'"
+            :class="[
+              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
+              accountCategory === 'oauth-based'
+                ? 'border-violet-500 bg-violet-50 dark:bg-violet-900/20'
+                : 'border-gray-200 hover:border-violet-300 dark:border-dark-600 dark:hover:border-violet-700'
+            ]"
+          >
+            <div
+              :class="[
+                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
+                accountCategory === 'oauth-based'
+                  ? 'bg-violet-500 text-white'
+                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
+              ]"
+            >
+              <PlatformIcon platform="copilot" size="sm" />
+            </div>
+            <div>
+              <span class="block text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.accounts.oauth.copilot.deviceCodeTitle') }}</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.oauth.copilot.deviceCodeDesc') }}</span>
             </div>
           </button>
         </div>
@@ -843,6 +888,97 @@
         </div>
       </div>
 
+      <!-- Copilot Model Mapping (OAuth only) -->
+      <!-- Copilot 只支持模型映射模式，不支持白名单模式 -->
+      <div v-if="form.platform === 'copilot'" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+        <label class="input-label">{{ t('admin.accounts.modelRestriction') }}</label>
+
+        <div class="mb-3 rounded-lg bg-purple-50 p-3 dark:bg-purple-900/20">
+          <p class="text-xs text-purple-700 dark:text-purple-400">{{ t('admin.accounts.mapRequestModels') }}</p>
+        </div>
+
+        <div v-if="modelMappings.length > 0" class="mb-3 space-y-2">
+          <div
+            v-for="(mapping, index) in modelMappings"
+            :key="getModelMappingKey(mapping)"
+            class="flex items-center gap-2"
+          >
+            <input
+              v-model="mapping.from"
+              type="text"
+              class="input flex-1"
+              :placeholder="t('admin.accounts.requestModel')"
+            />
+            <svg
+              class="h-4 w-4 flex-shrink-0 text-gray-400"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M14 5l7 7m0 0l-7 7m7-7H3"
+              />
+            </svg>
+            <input
+              v-model="mapping.to"
+              type="text"
+              class="input flex-1"
+              :placeholder="t('admin.accounts.actualModel')"
+            />
+            <button
+              type="button"
+              @click="removeModelMapping(index)"
+              class="rounded-lg p-2 text-red-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
+            >
+              <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          @click="addModelMapping"
+          class="mb-3 w-full rounded-lg border-2 border-dashed border-gray-300 px-4 py-2 text-gray-600 transition-colors hover:border-gray-400 hover:text-gray-700 dark:border-dark-500 dark:text-gray-400 dark:hover:border-dark-400 dark:hover:text-gray-300"
+        >
+          <svg
+            class="mr-1 inline h-4 w-4"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M12 4v16m8-8H4"
+            />
+          </svg>
+          {{ t('admin.accounts.addMapping') }}
+        </button>
+
+        <div class="flex flex-wrap gap-2">
+          <button
+            v-for="preset in copilotPresetMappings"
+            :key="preset.label"
+            type="button"
+            @click="addCopilotPresetMapping(preset.from, preset.to)"
+            :class="['rounded-lg px-3 py-1 text-xs transition-colors', preset.color]"
+          >
+            + {{ preset.label }}
+          </button>
+        </div>
+      </div>
+
       <!-- Add Method (only for Anthropic OAuth-based type) -->
       <div v-if="form.platform === 'anthropic' && isOAuthFlow">
         <label class="input-label">{{ t('admin.accounts.addMethod') }}</label>
@@ -870,8 +1006,8 @@
         </div>
       </div>
 
-      <!-- API Key input (only for apikey type, excluding Antigravity which has its own fields) -->
-      <div v-if="form.type === 'apikey' && form.platform !== 'antigravity'" class="space-y-4">
+      <!-- API Key input (only for apikey type, excluding Antigravity and Copilot which have their own fields) -->
+      <div v-if="form.type === 'apikey' && form.platform !== 'antigravity' && form.platform !== 'copilot'" class="space-y-4">
         <div>
           <label class="input-label">{{ t('admin.accounts.baseUrl') }}</label>
           <input
@@ -1803,7 +1939,88 @@
 
     <!-- Step 2: OAuth Authorization -->
     <div v-else class="space-y-5">
+      <!-- Copilot Device Code Flow -->
+      <div v-if="form.platform === 'copilot'" class="space-y-5">
+        <!-- Step: Start Device Code Flow -->
+        <div v-if="!copilotOAuth.userCode.value" class="text-center py-6">
+          <button
+            type="button"
+            :disabled="copilotOAuth.loading.value"
+            @click="handleCopilotStartFlow"
+            class="btn btn-primary px-6 py-3 text-base"
+          >
+            <svg
+              v-if="copilotOAuth.loading.value"
+              class="-ml-1 mr-2 h-5 w-5 animate-spin"
+              fill="none"
+              viewBox="0 0 24 24"
+            >
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+            </svg>
+            {{ copilotOAuth.loading.value ? t('admin.accounts.oauth.copilot.startingFlow') : t('admin.accounts.oauth.copilot.connectButton') }}
+          </button>
+        </div>
+
+        <!-- Step: Show user_code + verification_uri -->
+        <div v-else class="space-y-5">
+          <div class="rounded-lg border border-violet-200 bg-violet-50 p-5 dark:border-violet-800/40 dark:bg-violet-900/20">
+            <p class="mb-3 text-sm text-violet-700 dark:text-violet-300">
+              {{ t('admin.accounts.oauth.copilot.enterCodePrompt') }}
+            </p>
+            <div class="flex items-center justify-center gap-3 mb-4">
+              <code class="rounded-lg bg-white px-6 py-3 text-2xl font-bold tracking-widest text-violet-800 shadow-sm dark:bg-dark-700 dark:text-violet-300">
+                {{ copilotOAuth.userCode.value }}
+              </code>
+              <button
+                type="button"
+                @click="handleCopilotCopyCode"
+                class="rounded-lg bg-violet-100 p-2 text-violet-600 transition-colors hover:bg-violet-200 dark:bg-violet-900/40 dark:text-violet-400 dark:hover:bg-violet-900/60"
+                :title="t('admin.accounts.oauth.copilot.copyCode')"
+              >
+                <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+              </button>
+            </div>
+            <div class="text-center">
+              <a
+                :href="copilotOAuth.verificationUri.value"
+                target="_blank"
+                rel="noreferrer"
+                class="inline-flex items-center gap-2 rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-violet-700"
+              >
+                <PlatformIcon platform="copilot" size="sm" />
+                {{ t('admin.accounts.oauth.copilot.openGitHub') }}
+                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                </svg>
+              </a>
+            </div>
+          </div>
+
+          <!-- Polling status -->
+          <div v-if="copilotOAuth.polling.value" class="flex items-center justify-center gap-3 rounded-lg bg-gray-50 p-4 dark:bg-dark-700">
+            <svg class="h-5 w-5 animate-spin text-violet-500" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+            </svg>
+            <div>
+              <p class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('admin.accounts.oauth.copilot.waitingForAuth') }}</p>
+              <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.oauth.copilot.waitingForAuthDesc') }}</p>
+            </div>
+          </div>
+
+          <!-- Error -->
+          <div v-if="copilotOAuth.error.value" class="rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-400">
+            {{ copilotOAuth.error.value }}
+          </div>
+        </div>
+      </div>
+
+      <!-- Other platforms: standard OAuth flow -->
       <OAuthAuthorizationFlow
+        v-else
         ref="oauthFlowRef"
         :add-method="form.platform === 'anthropic' ? addMethod : 'oauth'"
         :auth-url="currentAuthUrl"
@@ -1874,7 +2091,7 @@
           {{ t('common.back') }}
         </button>
         <button
-          v-if="isManualInputMethod"
+          v-if="isManualInputMethod && form.platform !== 'copilot'"
           type="button"
           :disabled="!canExchangeCode"
           class="btn btn-primary"
@@ -2163,6 +2380,7 @@ import {
 import { useOpenAIOAuth } from '@/composables/useOpenAIOAuth'
 import { useGeminiOAuth } from '@/composables/useGeminiOAuth'
 import { useAntigravityOAuth } from '@/composables/useAntigravityOAuth'
+import { useCopilotOAuth } from '@/composables/useCopilotOAuth'
 import type {
   Proxy,
   AdminGroup,
@@ -2174,6 +2392,7 @@ import type {
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
+import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
 import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
@@ -2202,6 +2421,7 @@ const oauthStepTitle = computed(() => {
   if (form.platform === 'openai' || form.platform === 'sora') return t('admin.accounts.oauth.openai.title')
   if (form.platform === 'gemini') return t('admin.accounts.oauth.gemini.title')
   if (form.platform === 'antigravity') return t('admin.accounts.oauth.antigravity.title')
+  if (form.platform === 'copilot') return t('admin.accounts.oauth.copilot.title')
   return t('admin.accounts.oauth.title')
 })
 
@@ -2238,6 +2458,7 @@ const openaiOAuth = useOpenAIOAuth({ platform: 'openai' }) // For OpenAI OAuth
 const soraOAuth = useOpenAIOAuth({ platform: 'sora' }) // For Sora OAuth
 const geminiOAuth = useGeminiOAuth() // For Gemini OAuth
 const antigravityOAuth = useAntigravityOAuth() // For Antigravity OAuth
+const copilotOAuth = useCopilotOAuth() // For Copilot Device Code OAuth
 const activeOpenAIOAuth = computed(() => (form.platform === 'sora' ? soraOAuth : openaiOAuth))
 
 // Computed: current OAuth state for template binding
@@ -2311,6 +2532,7 @@ const antigravityModelRestrictionMode = ref<'whitelist' | 'mapping'>('whitelist'
 const antigravityWhitelistModels = ref<string[]>([])
 const antigravityModelMappings = ref<ModelMapping[]>([])
 const antigravityPresetMappings = computed(() => getPresetMappingsByPlatform('antigravity'))
+const copilotPresetMappings = computed(() => getPresetMappingsByPlatform('copilot'))
 const tempUnschedEnabled = ref(false)
 const tempUnschedRules = ref<TempUnschedRuleForm[]>([])
 const getModelMappingKey = createStableObjectKeyResolver<ModelMapping>('create-model-mapping')
@@ -2437,6 +2659,10 @@ const isOAuthFlow = computed(() => {
   if (form.platform === 'antigravity' && antigravityAccountType.value === 'upstream') {
     return false
   }
+  // Copilot 只有 OAuth 类型
+  if (form.platform === 'copilot') {
+    return true
+  }
   return accountCategory.value === 'oauth-based'
 })
 
@@ -2545,6 +2771,22 @@ watch(
       addMethod.value = 'oauth'
       form.type = 'oauth'
     }
+    if (newPlatform === 'copilot') {
+      accountCategory.value = 'oauth-based'
+      addMethod.value = 'oauth'
+      form.type = 'oauth'
+      // Load default model mappings for display
+      adminAPI.copilot.getDefaultModelMapping().then((mapping) => {
+        if (mapping && Object.keys(mapping).length > 0) {
+          modelMappings.value = Object.entries(mapping)
+            .map(([from, to]) => ({ from, to }))
+            .sort((a, b) => a.from.localeCompare(b.from))
+          modelRestrictionMode.value = 'mapping'
+        }
+      }).catch(() => {
+        // Non-fatal
+      })
+    }
     if (newPlatform !== 'openai') {
       openaiPassthroughEnabled.value = false
       codexCLIOnlyEnabled.value = false
@@ -2558,6 +2800,7 @@ watch(
     soraOAuth.resetState()
     geminiOAuth.resetState()
     antigravityOAuth.resetState()
+    copilotOAuth.resetState()
   }
 )
 
@@ -2648,6 +2891,14 @@ const addAntigravityPresetMapping = (from: string, to: string) => {
     return
   }
   antigravityModelMappings.value.push({ from, to })
+}
+
+const addCopilotPresetMapping = (from: string, to: string) => {
+  if (modelMappings.value.some((m) => m.from === from)) {
+    appStore.showInfo(t('admin.accounts.mappingExists', { model: from }))
+    return
+  }
+  modelMappings.value.push({ from, to })
 }
 
 // Error code toggle helper
@@ -2945,6 +3196,7 @@ const resetForm = () => {
   soraOAuth.resetState()
   geminiOAuth.resetState()
   antigravityOAuth.resetState()
+  copilotOAuth.resetState()
   oauthFlowRef.value?.reset()
   antigravityMixedChannelConfirmed.value = false
   clearMixedChannelDialog()
@@ -3156,6 +3408,7 @@ const goBackToBasicInfo = () => {
   soraOAuth.resetState()
   geminiOAuth.resetState()
   antigravityOAuth.resetState()
+  copilotOAuth.resetState()
   oauthFlowRef.value?.reset()
 }
 
@@ -3833,6 +4086,43 @@ const handleAnthropicExchange = async (authCode: string) => {
   } finally {
     oauth.loading.value = false
   }
+}
+
+// Copilot Device Code Flow
+const handleCopilotStartFlow = async () => {
+  const success = await copilotOAuth.startDeviceCodeFlow()
+  if (success) {
+    copilotOAuth.startPolling(handleCopilotAuthSuccess)
+  }
+}
+
+const handleCopilotCopyCode = async () => {
+  try {
+    await navigator.clipboard.writeText(copilotOAuth.userCode.value)
+    appStore.showSuccess(t('admin.accounts.oauth.copilot.codeCopied'))
+  } catch {
+    // Clipboard API may fail in non-HTTPS contexts; show the code for manual copy
+    appStore.showInfo(copilotOAuth.userCode.value)
+  }
+}
+
+const handleCopilotAuthSuccess = async (accessToken: string) => {
+  const credentials: Record<string, unknown> = {
+    access_token: accessToken
+  }
+
+  try {
+    // Fetch default model mapping
+    const defaultMapping = await adminAPI.copilot.getDefaultModelMapping()
+    if (defaultMapping && Object.keys(defaultMapping).length > 0) {
+      credentials.model_mapping = defaultMapping
+    }
+  } catch {
+    // Non-fatal: proceed without default mapping
+  }
+
+  appStore.showSuccess(t('admin.accounts.oauth.copilot.authSuccess'))
+  await createAccountAndFinish('copilot', 'oauth', credentials)
 }
 
 // 主入口：根据平台路由到对应处理函数

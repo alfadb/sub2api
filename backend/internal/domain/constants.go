@@ -22,6 +22,7 @@ const (
 	PlatformOpenAI      = "openai"
 	PlatformGemini      = "gemini"
 	PlatformAntigravity = "antigravity"
+	PlatformCopilot     = "copilot"
 	PlatformSora        = "sora"
 )
 
@@ -107,4 +108,34 @@ var DefaultAntigravityModelMapping = map[string]string{
 	// 其他官方模型
 	"gpt-oss-120b-medium":    "gpt-oss-120b-medium",
 	"tab_flash_lite_preview": "tab_flash_lite_preview",
+}
+
+// DefaultCopilotModelMapping 是 Copilot 平台创建账号时的默认模型映射
+var DefaultCopilotModelMapping = map[string]string{
+	// Claude (dot 格式)
+	"claude-sonnet-4.6": "claude-sonnet-4.6",
+	"claude-sonnet-4.5": "claude-sonnet-4.5",
+	"claude-opus-4.6":   "claude-opus-4.6",
+	"claude-opus-4.5":   "claude-opus-4.5",
+	"claude-haiku-4.5":  "claude-haiku-4.5",
+	// Claude (dash 格式 → dot 格式)
+	"claude-sonnet-4-6":          "claude-sonnet-4.6",
+	"claude-sonnet-4-5":          "claude-sonnet-4.5",
+	"claude-sonnet-4-5-20250929": "claude-sonnet-4.5",
+	"claude-opus-4-6":            "claude-opus-4.6",
+	"claude-opus-4-5":            "claude-opus-4.5",
+	"claude-opus-4-5-20251101":   "claude-opus-4.5",
+	"claude-haiku-4-5":           "claude-haiku-4.5",
+	"claude-haiku-4-5-20251001":  "claude-haiku-4.5",
+	// GPT
+	"gpt-5-mini":         "gpt-5-mini",
+	"gpt-5.1":            "gpt-5.1",
+	"gpt-5.2":            "gpt-5.2",
+	"gpt-5.1-codex":      "gpt-5.1-codex",
+	"gpt-5.1-codex-max":  "gpt-5.1-codex-max",
+	"gpt-5.1-codex-mini": "gpt-5.1-codex-mini",
+	"gpt-5.2-codex":      "gpt-5.2-codex",
+	// Gemini
+	"gemini-3-flash-preview": "gemini-3-flash-preview",
+	"gemini-3.1-pro-preview": "gemini-3.1-pro-preview",
 }

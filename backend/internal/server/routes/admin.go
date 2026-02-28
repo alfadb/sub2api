@@ -43,6 +43,9 @@ func RegisterAdminRoutes(
 		// Antigravity OAuth
 		registerAntigravityOAuthRoutes(admin, h)
 
+		// Copilot OAuth
+		registerCopilotOAuthRoutes(admin, h)
+
 		// 代理管理
 		registerProxyRoutes(admin, h)
 
@@ -307,6 +310,15 @@ func registerAntigravityOAuthRoutes(admin *gin.RouterGroup, h *handler.Handlers)
 		antigravity.POST("/oauth/auth-url", h.Admin.AntigravityOAuth.GenerateAuthURL)
 		antigravity.POST("/oauth/exchange-code", h.Admin.AntigravityOAuth.ExchangeCode)
 		antigravity.POST("/oauth/refresh-token", h.Admin.AntigravityOAuth.RefreshToken)
+	}
+}
+
+func registerCopilotOAuthRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	copilot := admin.Group("/copilot")
+	{
+		copilot.POST("/oauth/device-code", h.Admin.CopilotOAuth.InitiateDeviceCode)
+		copilot.POST("/oauth/poll-token", h.Admin.CopilotOAuth.PollToken)
+		copilot.GET("/default-model-mapping", h.Admin.CopilotOAuth.GetDefaultModelMapping)
 	}
 }
 

@@ -1110,7 +1110,8 @@ export default {
         openai: 'OpenAI',
         gemini: 'Gemini',
         antigravity: 'Antigravity',
-        sora: 'Sora'
+        sora: 'Sora',
+        copilot: 'Copilot'
       },
       deleteConfirm:
         "Are you sure you want to delete '{name}'? All associated API keys will no longer belong to any group.",
@@ -1368,7 +1369,8 @@ export default {
         openai: 'OpenAI',
         gemini: 'Gemini',
         antigravity: 'Antigravity',
-        sora: 'Sora'
+        sora: 'Sora',
+        copilot: 'Copilot'
       },
       types: {
         oauth: 'OAuth',
@@ -1834,6 +1836,25 @@ export default {
                     validateAndCreate: 'Validate & Create',
                     pleaseEnterRefreshToken: 'Please enter Refresh Token',
                     failedToValidateRT: 'Failed to validate Refresh Token'
+                  },
+                  // Copilot specific (Device Code Flow)
+                  copilot: {
+                    title: 'GitHub Copilot Authorization',
+                    deviceCodeTitle: 'GitHub Device Code',
+                    deviceCodeDesc: 'Connect Copilot via GitHub OAuth authorization',
+                    connectButton: 'Connect GitHub Copilot',
+                    startingFlow: 'Initiating Device Code Flow...',
+                    failedToStartFlow: 'Failed to initiate GitHub Device Code Flow',
+                    enterCodePrompt: 'Enter the code below on GitHub to authorize:',
+                    openGitHub: 'Open GitHub Authorization',
+                    copyCode: 'Copy Code',
+                    codeCopied: 'Code copied to clipboard',
+                    waitingForAuth: 'Waiting for authorization...',
+                    waitingForAuthDesc: 'Please complete authorization in your browser. This page will update automatically.',
+                    codeExpired: 'Authorization code expired. Please try again.',
+                    authFailed: 'GitHub authorization failed',
+                    authSuccess: 'GitHub Copilot authorized successfully',
+                    accountCreated: 'Copilot account created successfully'
                   }
                 },      // Gemini specific (platform-wide)
       gemini: {

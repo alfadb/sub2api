@@ -2604,6 +2604,8 @@ func getAccountPlatform(accountPlatform string) string {
 		return "Antigravity"
 	case PlatformAnthropic, "claude":
 		return "Anthropic"
+	case PlatformCopilot:
+		return "Copilot"
 	default:
 		return ""
 	}

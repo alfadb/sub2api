@@ -852,6 +852,24 @@ const allAnthropicOAuthOrSetupToken = computed(() => {
   )
 })
 
+
+const platformModelPrefix: Record<string, string[]> = {
+  anthropic: ['claude-'],
+  antigravity: ['claude-', 'gemini-', 'gpt-oss-', 'tab_'],
+  copilot: ['claude-', 'gpt-', 'gemini-'],
+  openai: ['gpt-'],
+  gemini: ['gemini-'],
+  sora: []
+}
+
+const filteredModels = computed(() => {
+  if (props.selectedPlatforms.length === 0) return allModels
+  const prefixes = [...new Set(props.selectedPlatforms.flatMap(p => platformModelPrefix[p] || []))]
+  if (prefixes.length === 0) return allModels
+  return allModels.filter(m => prefixes.some(prefix => m.value.startsWith(prefix)))
+})
+
+
 const filteredPresets = computed(() => {
   if (props.selectedPlatforms.length === 0) return []
 

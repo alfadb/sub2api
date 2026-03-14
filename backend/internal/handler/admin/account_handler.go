@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -54,6 +55,7 @@ type AccountHandler struct {
 	accountTestService      *service.AccountTestService
 	concurrencyService      *service.ConcurrencyService
 	crsSyncService          *service.CRSSyncService
+	copilotGatewayService   *service.CopilotGatewayService
 	sessionLimitCache       service.SessionLimitCache
 	rpmCache                service.RPMCache
 	tokenCacheInvalidator   service.TokenCacheInvalidator
@@ -71,6 +73,7 @@ func NewAccountHandler(
 	accountTestService *service.AccountTestService,
 	concurrencyService *service.ConcurrencyService,
 	crsSyncService *service.CRSSyncService,
+	copilotGatewayService *service.CopilotGatewayService,
 	sessionLimitCache service.SessionLimitCache,
 	rpmCache service.RPMCache,
 	tokenCacheInvalidator service.TokenCacheInvalidator,
@@ -86,6 +89,7 @@ func NewAccountHandler(
 		accountTestService:      accountTestService,
 		concurrencyService:      concurrencyService,
 		crsSyncService:          crsSyncService,
+		copilotGatewayService:   copilotGatewayService,
 		sessionLimitCache:       sessionLimitCache,
 		rpmCache:                rpmCache,
 		tokenCacheInvalidator:   tokenCacheInvalidator,
@@ -1818,6 +1822,64 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 	if account.Platform == service.PlatformAntigravity {
 		// 直接复用 antigravity.DefaultModels()，与 /v1/models 端点保持同步
 		response.Success(c, antigravity.DefaultModels())
+		return
+	}
+
+	// Handle Copilot accounts: fetch models from upstream
+	if account.Platform == service.PlatformCopilot {
+		if h.copilotGatewayService != nil {
+			rawBody, err := h.copilotGatewayService.FetchModels(c.Request.Context(), account)
+			if err == nil {
+				// Parse upstream response and convert to ClaudeModel-compatible format
+				type upstreamModel struct {
+					ID string `json:"id"`
+				}
+				type upstreamResponse struct {
+					Data []upstreamModel `json:"data"`
+				}
+				var upstream upstreamResponse
+				if json.Unmarshal(rawBody, &upstream) == nil && len(upstream.Data) > 0 {
+					type modelEntry struct {
+						ID          string `json:"id"`
+						Type        string `json:"type"`
+						DisplayName string `json:"display_name"`
+					}
+					models := make([]modelEntry, 0, len(upstream.Data))
+					for _, m := range upstream.Data {
+						models = append(models, modelEntry{
+							ID:          m.ID,
+							Type:        "model",
+							DisplayName: m.ID,
+						})
+					}
+					response.Success(c, models)
+					return
+				}
+			} else {
+				log.Printf("[Admin] Copilot FetchModels failed, falling back to static list: %v", err)
+			}
+		}
+		// Fallback: return models from DefaultCopilotModelMapping
+		type modelEntry struct {
+			ID          string `json:"id"`
+			Type        string `json:"type"`
+			DisplayName string `json:"display_name"`
+		}
+		seen := make(map[string]struct{})
+		var models []modelEntry
+		for _, mapped := range domain.DefaultCopilotModelMapping {
+			if _, ok := seen[mapped]; ok {
+				continue
+			}
+			seen[mapped] = struct{}{}
+			models = append(models, modelEntry{
+				ID:          mapped,
+				Type:        "model",
+				DisplayName: mapped,
+			})
+		}
+		sort.Slice(models, func(i, j int) bool { return models[i].ID < models[j].ID })
+		response.Success(c, models)
 		return
 	}
 

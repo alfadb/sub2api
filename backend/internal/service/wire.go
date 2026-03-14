@@ -139,6 +139,13 @@ func ProvideUsageCleanupService(repo UsageCleanupRepository, timingWheel *Timing
 }
 
 // ProvideAccountExpiryService creates and starts AccountExpiryService.
+// ProvideOpenCodeVersionService creates and starts OpenCodeVersionService.
+func ProvideOpenCodeVersionService() *OpenCodeVersionService {
+	svc := NewOpenCodeVersionService()
+	svc.Start()
+	return svc
+}
+
 func ProvideAccountExpiryService(accountRepo AccountRepository) *AccountExpiryService {
 	svc := NewAccountExpiryService(accountRepo, time.Minute)
 	svc.Start()
@@ -428,6 +435,9 @@ var ProviderSet = wire.NewSet(
 	ProvideSoraMediaStorage,
 	ProvideSoraMediaCleanupService,
 	ProvideSoraSDKClient,
+	NewSoraS3Storage,
+	NewSoraGenerationService,
+	NewSoraQuotaService,
 	wire.Bind(new(SoraClient), new(*SoraSDKClient)),
 	NewSoraGatewayService,
 	NewOpenAIGatewayService,
@@ -445,6 +455,10 @@ var ProviderSet = wire.NewSet(
 	ProvideOpenAITokenProvider,
 	ProvideClaudeTokenProvider,
 	NewAntigravityGatewayService,
+	NewCopilotGatewayService,
+	NewCopilotTokenProvider,
+	NewCopilotOAuthService,
+	ProvideOpenCodeVersionService,
 	ProvideRateLimitService,
 	NewAccountUsageService,
 	NewAccountTestService,

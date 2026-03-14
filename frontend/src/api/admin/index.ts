@@ -24,6 +24,7 @@ import dataManagementAPI from './dataManagement'
 import apiKeysAPI from './apiKeys'
 import scheduledTestsAPI from './scheduledTests'
 import backupAPI from './backup'
+import copilotAPI from './copilot'
 
 /**
  * Unified admin API object for convenient access
@@ -43,6 +44,7 @@ export const adminAPI = {
   usage: usageAPI,
   gemini: geminiAPI,
   antigravity: antigravityAPI,
+  copilot: copilotAPI,
   userAttributes: userAttributesAPI,
   ops: opsAPI,
   errorPassthrough: errorPassthroughAPI,
@@ -67,6 +69,7 @@ export {
   usageAPI,
   geminiAPI,
   antigravityAPI,
+  copilotAPI,
   userAttributesAPI,
   opsAPI,
   errorPassthroughAPI,

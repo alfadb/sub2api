@@ -96,6 +96,7 @@ func provideCleanup(
 	scheduledTestRunner *service.ScheduledTestRunnerService,
 	backupSvc *service.BackupService,
 	opencodeVersion *service.OpenCodeVersionService,
+	scriptUsageCheck *service.ScriptUsageCheckService,
 ) func() {
 	return func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -240,6 +241,12 @@ func provideCleanup(
 			}},
 			{"OpenCodeVersionService", func() error {
 				opencodeVersion.Stop()
+				return nil
+			}},
+			{"ScriptUsageCheckService", func() error {
+				if scriptUsageCheck != nil {
+					scriptUsageCheck.Stop()
+				}
 				return nil
 			}},
 		}

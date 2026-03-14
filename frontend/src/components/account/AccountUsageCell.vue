@@ -405,6 +405,20 @@
       </div>
     </template>
 
+    <!-- Script-based usage windows (third-party relays) -->
+    <template v-else-if="hasScriptWindows">
+      <div class="space-y-1">
+        <UsageProgressBar
+          v-for="(win, idx) in usageInfo!.script_windows!"
+          :key="idx"
+          :label="win.name"
+          :utilization="win.utilization * 100"
+          :resets-at="win.resets_at ? new Date(win.resets_at * 1000).toISOString() : null"
+          color="amber"
+        />
+      </div>
+    </template>
+
     <!-- Other accounts: no usage window -->
     <template v-else>
       <div class="text-xs text-gray-400">-</div>
@@ -514,10 +528,14 @@ const usageInfo = ref<AccountUsageInfo | null>(null)
 const showUsageWindows = computed(() => {
   // Gemini: we can always compute local usage windows from DB logs (simulated quotas).
   if (props.account.platform === 'gemini') return true
+  // Accounts with custom base_url may have script-based usage
+  if (props.account.credentials?.base_url) return true
   return props.account.type === 'oauth' || props.account.type === 'setup-token'
 })
 
 const shouldFetchUsage = computed(() => {
+  // Accounts with custom base_url: always fetch (script-based usage)
+  if (props.account.credentials?.base_url) return true
   if (props.account.platform === 'anthropic') {
     return props.account.type === 'oauth' || props.account.type === 'setup-token'
   }
@@ -555,6 +573,9 @@ const hasCopilotUsage = computed(() => {
   )
 })
 
+const hasScriptWindows = computed(() => {
+  return usageInfo.value?.script_windows && usageInfo.value.script_windows.length > 0
+})
 
 const hasOpenAIUsageFallback = computed(() => {
   if (props.account.platform !== 'openai' || props.account.type !== 'oauth') return false

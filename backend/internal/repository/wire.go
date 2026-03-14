@@ -76,6 +76,7 @@ var ProviderSet = wire.NewSet(
 	NewErrorPassthroughRepository,
 	NewTLSFingerprintProfileRepository,
 	NewChannelRepository,
+	NewUsageScriptRepository,
 
 	// Cache implementations
 	NewGatewayCache,
@@ -100,7 +101,6 @@ var ProviderSet = wire.NewSet(
 	NewTotpCache,
 	NewRefreshTokenCache,
 	NewErrorPassthroughCache,
-	NewTLSFingerprintProfileCache,
 
 	// Encryptors
 	NewAESEncryptor,

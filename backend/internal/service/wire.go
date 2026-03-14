@@ -372,6 +372,18 @@ func ProvideScheduledTestRunnerService(
 	return svc
 }
 
+// ProvideScriptUsageCheckService creates and starts ScriptUsageCheckService.
+func ProvideScriptUsageCheckService(
+	accountRepo AccountRepository,
+	usageScriptRepo UsageScriptRepository,
+	accountUsageSvc *AccountUsageService,
+	cfg *config.Config,
+) *ScriptUsageCheckService {
+	svc := NewScriptUsageCheckService(accountRepo, usageScriptRepo, accountUsageSvc, cfg)
+	svc.Start()
+	return svc
+}
+
 // ProvideOpsScheduledReportService creates and starts OpsScheduledReportService.
 func ProvideOpsScheduledReportService(
 	opsService *OpsService,
@@ -492,6 +504,7 @@ var ProviderSet = wire.NewSet(
 	ProvideUsageCleanupService,
 	ProvideDeferredService,
 	NewAntigravityQuotaFetcher,
+	NewScriptEngine,
 	NewUserAttributeService,
 	NewUsageCache,
 	NewTotpService,
@@ -506,4 +519,5 @@ var ProviderSet = wire.NewSet(
 	NewGroupCapacityService,
 	NewChannelService,
 	NewModelPricingResolver,
+	ProvideScriptUsageCheckService,
 )

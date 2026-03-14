@@ -32,6 +32,7 @@ type AdminHandlers struct {
 	APIKey                *admin.AdminAPIKeyHandler
 	ScheduledTest         *admin.ScheduledTestHandler
 	Channel               *admin.ChannelHandler
+	UsageScript           *admin.UsageScriptHandler
 }
 
 // Handlers contains all HTTP handlers

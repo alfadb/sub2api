@@ -85,6 +85,9 @@ func RegisterAdminRoutes(
 		// TLS 指纹模板管理
 		registerTLSFingerprintProfileRoutes(admin, h)
 
+		// 用量脚本管理
+		registerUsageScriptRoutes(admin, h)
+
 		// API Key 管理
 		registerAdminAPIKeyRoutes(admin, h)
 
@@ -592,5 +595,15 @@ func registerChannelRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		channels.POST("", h.Admin.Channel.Create)
 		channels.PUT("/:id", h.Admin.Channel.Update)
 		channels.DELETE("/:id", h.Admin.Channel.Delete)
+	}
+}
+
+func registerUsageScriptRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	scripts := admin.Group("/usage-scripts")
+	{
+		scripts.GET("", h.Admin.UsageScript.List)
+		scripts.POST("", h.Admin.UsageScript.Create)
+		scripts.PUT("/:id", h.Admin.UsageScript.Update)
+		scripts.DELETE("/:id", h.Admin.UsageScript.Delete)
 	}
 }

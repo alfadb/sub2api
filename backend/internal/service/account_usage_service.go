@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -226,6 +227,9 @@ type UsageInfo struct {
 	// Copilot 本地用量统计（基于 usage_logs，无公开 API）
 	CopilotDaily   *UsageProgress `json:"copilot_daily,omitempty"`
 	CopilotMonthly *UsageProgress `json:"copilot_monthly,omitempty"`
+
+	// 脚本引擎采集的通用用量窗口
+	ScriptWindows []ScriptUsageWindow `json:"script_windows,omitempty"`
 }
 
 // ClaudeUsageResponse Anthropic API返回的usage结构
@@ -311,6 +315,8 @@ type AccountUsageService struct {
 	cache                   *UsageCache
 	identityCache           IdentityCache
 	tlsFPProfileService     *TLSFingerprintProfileService
+	scriptEngine            *ScriptEngine
+	usageScriptRepo         UsageScriptRepository
 }
 
 // NewAccountUsageService 创建AccountUsageService实例
@@ -324,6 +330,8 @@ func NewAccountUsageService(
 	cache *UsageCache,
 	identityCache IdentityCache,
 	tlsFPProfileService *TLSFingerprintProfileService,
+	scriptEngine *ScriptEngine,
+	usageScriptRepo UsageScriptRepository,
 ) *AccountUsageService {
 	return &AccountUsageService{
 		accountRepo:             accountRepo,
@@ -335,6 +343,8 @@ func NewAccountUsageService(
 		cache:                   cache,
 		identityCache:           identityCache,
 		tlsFPProfileService:     tlsFPProfileService,
+		scriptEngine:            scriptEngine,
+		usageScriptRepo:         usageScriptRepo,
 	}
 }
 
@@ -371,6 +381,17 @@ func (s *AccountUsageService) GetUsage(ctx context.Context, accountID int64) (*U
 			s.tryClearRecoverableAccountError(ctx, account)
 		}
 		return usage, err
+	}
+
+	// 非官方上游（中转站）：通过 Starlark 脚本采集用量
+	if baseURL := account.GetBaseURL(); baseURL != "" {
+		if usage, err := s.getScriptUsage(ctx, account, baseURL); usage != nil || err != nil {
+			return usage, err
+		}
+		// 无匹配脚本：自定义 base_url 的账号不走平台原生逻辑，返回空用量
+		if account.GetCredential("base_url") != "" {
+			return &UsageInfo{}, nil
+		}
 	}
 
 	// Antigravity 平台：使用 AntigravityQuotaFetcher 获取额度
@@ -1572,4 +1593,129 @@ func copilotMonthlyResetTime(now time.Time) time.Time {
 		year++
 	}
 	return time.Date(year, month, 1, 0, 0, 0, 0, time.UTC)
+}
+
+// UsageScriptRepository 用量脚本仓储接口
+type UsageScriptRepository interface {
+	FindByHostAndType(ctx context.Context, baseURLHost string, accountType string) (*UsageScript, error)
+	List(ctx context.Context) ([]*UsageScript, error)
+	Create(ctx context.Context, script *UsageScript) (*UsageScript, error)
+	Update(ctx context.Context, id int64, script *UsageScript) (*UsageScript, error)
+	Delete(ctx context.Context, id int64) error
+}
+
+// extractBaseURLHost 从 base_url 提取域名级标识（scheme://host）
+func extractBaseURLHost(baseURL string) string {
+	u, err := url.Parse(baseURL)
+	if err != nil || u.Host == "" {
+		return baseURL
+	}
+	return u.Scheme + "://" + u.Host
+}
+
+// getScriptUsage 尝试通过脚本引擎获取非官方上游的用量
+// 返回 (nil, nil) 表示无匹配脚本，调用方应继续走平台原生逻辑
+func (s *AccountUsageService) getScriptUsage(ctx context.Context, account *Account, baseURL string) (*UsageInfo, error) {
+	if s.usageScriptRepo == nil || s.scriptEngine == nil {
+		return nil, nil
+	}
+
+	host := extractBaseURLHost(baseURL)
+	script, err := s.usageScriptRepo.FindByHostAndType(ctx, host, account.Type)
+	if err != nil {
+		slog.Warn("usage_script_lookup_failed", "account_id", account.ID, "host", host, "error", err)
+		return nil, nil // 查找失败不阻塞，降级到平台原生逻辑
+	}
+	if script == nil {
+		return nil, nil // 无匹配脚本
+	}
+
+	// 使用 singleflight 防止并发执行同一账号的脚本
+	cacheKey := fmt.Sprintf("script:%d", account.ID)
+	result, flightErr, _ := s.cache.apiFlight.Do(cacheKey, func() (any, error) {
+		return s.scriptEngine.Execute(ctx, script.Script, account)
+	})
+	if flightErr != nil {
+		slog.Warn("usage_script_exec_failed", "account_id", account.ID, "host", host, "error", flightErr)
+		return nil, nil // 执行失败不阻塞
+	}
+
+	scriptResult, ok := result.(*ScriptUsageResult)
+	if !ok || scriptResult == nil {
+		return nil, nil
+	}
+
+	if scriptResult.Error != "" {
+		slog.Warn("usage_script_returned_error", "account_id", account.ID, "host", host, "error", scriptResult.Error)
+	}
+
+	now := time.Now()
+	return &UsageInfo{
+		UpdatedAt:     &now,
+		ScriptWindows: scriptResult.Windows,
+	}, nil
+}
+
+// ScriptCheckResult 脚本用量检查结果
+type ScriptCheckResult int
+
+const (
+	ScriptCheckNoop      ScriptCheckResult = iota // 无变化
+	ScriptCheckPaused                             // 撞墙，已暂停
+	ScriptCheckRecovered                          // 窗口恢复，已解除暂停
+)
+
+// CheckScriptUsageForScheduling 检查脚本用量并在超限时标记账号为临时不可调度
+// 如果账号当前因 usage_script 被暂停但用量已恢复，主动清除暂停状态
+func (s *AccountUsageService) CheckScriptUsageForScheduling(ctx context.Context, account *Account) ScriptCheckResult {
+	baseURL := account.GetBaseURL()
+	if baseURL == "" {
+		return ScriptCheckNoop
+	}
+	if s.usageScriptRepo == nil || s.scriptEngine == nil {
+		return ScriptCheckNoop
+	}
+
+	host := extractBaseURLHost(baseURL)
+	script, err := s.usageScriptRepo.FindByHostAndType(ctx, host, account.Type)
+	if err != nil || script == nil {
+		return ScriptCheckNoop
+	}
+
+	result, err := s.scriptEngine.Execute(ctx, script.Script, account)
+	if err != nil || result == nil || result.Error != "" {
+		return ScriptCheckNoop
+	}
+
+	for _, w := range result.Windows {
+		if w.Utilization >= 1.0 {
+			var until time.Time
+			if w.ResetsAt != nil {
+				until = time.Unix(*w.ResetsAt, 0)
+			} else {
+				until = time.Now().Add(5 * time.Minute) // 无重置时间则默认 5 分钟
+			}
+			reason := fmt.Sprintf("usage_script: %s/%s %.0f%%", host, w.Name, w.Utilization*100)
+			if setErr := s.accountRepo.SetTempUnschedulable(ctx, account.ID, until, reason); setErr != nil {
+				slog.Warn("script_usage_set_temp_unsched_failed", "account_id", account.ID, "error", setErr)
+			}
+			return ScriptCheckPaused
+		}
+	}
+
+	// 所有窗口 utilization < 1.0：如果账号当前因 usage_script 被暂停，主动恢复
+	if account.TempUnschedulableReason != "" &&
+		strings.HasPrefix(account.TempUnschedulableReason, "usage_script:") {
+		if clearErr := s.accountRepo.ClearTempUnschedulable(ctx, account.ID); clearErr != nil {
+			slog.Warn("script_usage_clear_temp_unsched_failed", "account_id", account.ID, "error", clearErr)
+		} else {
+			slog.Info("script_usage_check.recovered",
+				"account_id", account.ID,
+				"previous_reason", account.TempUnschedulableReason,
+			)
+		}
+		return ScriptCheckRecovered
+	}
+
+	return ScriptCheckNoop
 }

@@ -341,6 +341,8 @@ export default {
     redeemCodes: '兑换码',
     ops: '运维监控',
     promoCodes: '优惠码',
+    dataManagement: '数据管理',
+    usageScripts: '用量脚本',
     settings: '系统设置',
     myAccount: '我的账户',
     lightMode: '浅色模式',
@@ -4717,6 +4719,51 @@ export default {
       failedToSave: '保存规则失败',
       failedToDelete: '删除规则失败',
       failedToToggle: '切换状态失败'
+    }
+  },
+
+  usageScripts: {
+    title: '用量脚本',
+    description: '管理第三方中转站用量采集的 Starlark 脚本',
+    create: '创建脚本',
+    edit: '编辑脚本',
+    noScripts: '暂无用量脚本',
+    createFirst: '创建第一个用量脚本',
+
+    columns: {
+      baseUrlHost: '上游域名',
+      accountType: '账号类型',
+      script: '脚本',
+      enabled: '启用',
+      createdAt: '创建时间',
+      actions: '操作'
+    },
+
+    form: {
+      baseUrlHost: '上游域名',
+      baseUrlHostPlaceholder: '例如：https://api.example.com',
+      baseUrlHostHint: '域名级匹配（scheme://host）',
+      accountType: '账号类型',
+      accountTypePlaceholder: '选择账号类型',
+      script: 'Starlark 脚本',
+      scriptPlaceholder: 'def fetch_usage(ctx):\n    ...',
+      enabled: '启用'
+    },
+
+    accountTypes: {
+      oauth: 'OAuth',
+      apikey: 'API Key',
+      'setup-token': 'Setup Token'
+    },
+
+    messages: {
+      created: '用量脚本创建成功',
+      updated: '用量脚本更新成功',
+      deleted: '用量脚本删除成功',
+      deleteConfirm: '确定要删除此用量脚本吗？',
+      failedToLoad: '加载用量脚本失败',
+      failedToSave: '保存用量脚本失败',
+      failedToDelete: '删除用量脚本失败'
     }
   },
 

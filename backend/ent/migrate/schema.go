@@ -849,6 +849,30 @@ var (
 			},
 		},
 	}
+	// UsageScriptsColumns holds the columns for the "usage_scripts" table.
+	UsageScriptsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "created_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "updated_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "deleted_at", Type: field.TypeTime, Nullable: true, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "base_url_host", Type: field.TypeString, SchemaType: map[string]string{"postgres": "text"}},
+		{Name: "account_type", Type: field.TypeString, Size: 20},
+		{Name: "script", Type: field.TypeString, SchemaType: map[string]string{"postgres": "text"}},
+		{Name: "enabled", Type: field.TypeBool, Default: true},
+	}
+	// UsageScriptsTable holds the schema information for the "usage_scripts" table.
+	UsageScriptsTable = &schema.Table{
+		Name:       "usage_scripts",
+		Columns:    UsageScriptsColumns,
+		PrimaryKey: []*schema.Column{UsageScriptsColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "usagescript_base_url_host_account_type",
+				Unique:  false,
+				Columns: []*schema.Column{UsageScriptsColumns[4], UsageScriptsColumns[5]},
+			},
+		},
+	}
 	// UsersColumns holds the columns for the "users" table.
 	UsersColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt64, Increment: true},
@@ -1113,6 +1137,7 @@ var (
 		SettingsTable,
 		UsageCleanupTasksTable,
 		UsageLogsTable,
+		UsageScriptsTable,
 		UsersTable,
 		UserAllowedGroupsTable,
 		UserAttributeDefinitionsTable,
@@ -1185,6 +1210,9 @@ func init() {
 	UsageLogsTable.ForeignKeys[4].RefTable = UserSubscriptionsTable
 	UsageLogsTable.Annotation = &entsql.Annotation{
 		Table: "usage_logs",
+	}
+	UsageScriptsTable.Annotation = &entsql.Annotation{
+		Table: "usage_scripts",
 	}
 	UsersTable.Annotation = &entsql.Annotation{
 		Table: "users",

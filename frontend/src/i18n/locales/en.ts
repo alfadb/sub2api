@@ -341,6 +341,8 @@ export default {
     redeemCodes: 'Redeem Codes',
     ops: 'Ops',
     promoCodes: 'Promo Codes',
+    dataManagement: 'Data Management',
+    usageScripts: 'Usage Scripts',
     settings: 'Settings',
     myAccount: 'My Account',
     lightMode: 'Light Mode',
@@ -4553,6 +4555,51 @@ export default {
       failedToSave: 'Failed to save rule',
       failedToDelete: 'Failed to delete rule',
       failedToToggle: 'Failed to toggle status'
+    }
+  },
+
+  usageScripts: {
+    title: 'Usage Scripts',
+    description: 'Manage Starlark scripts for third-party relay usage monitoring',
+    create: 'Create Script',
+    edit: 'Edit Script',
+    noScripts: 'No usage scripts configured',
+    createFirst: 'Create your first usage script',
+
+    columns: {
+      baseUrlHost: 'Base URL Host',
+      accountType: 'Account Type',
+      script: 'Script',
+      enabled: 'Enabled',
+      createdAt: 'Created At',
+      actions: 'Actions'
+    },
+
+    form: {
+      baseUrlHost: 'Base URL Host',
+      baseUrlHostPlaceholder: 'e.g., https://api.example.com',
+      baseUrlHostHint: 'Domain-level match (scheme://host)',
+      accountType: 'Account Type',
+      accountTypePlaceholder: 'Select account type',
+      script: 'Starlark Script',
+      scriptPlaceholder: 'def fetch_usage(ctx):\n    ...',
+      enabled: 'Enabled'
+    },
+
+    accountTypes: {
+      oauth: 'OAuth',
+      apikey: 'API Key',
+      'setup-token': 'Setup Token'
+    },
+
+    messages: {
+      created: 'Usage script created successfully',
+      updated: 'Usage script updated successfully',
+      deleted: 'Usage script deleted successfully',
+      deleteConfirm: 'Are you sure you want to delete this usage script?',
+      failedToLoad: 'Failed to load usage scripts',
+      failedToSave: 'Failed to save usage script',
+      failedToDelete: 'Failed to delete usage script'
     }
   },
 

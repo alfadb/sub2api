@@ -82,6 +82,9 @@ func RegisterAdminRoutes(
 		// 错误透传规则管理
 		registerErrorPassthroughRoutes(admin, h)
 
+		// 用量脚本管理
+		registerUsageScriptRoutes(admin, h)
+
 		// API Key 管理
 		registerAdminAPIKeyRoutes(admin, h)
 
@@ -562,5 +565,15 @@ func registerErrorPassthroughRoutes(admin *gin.RouterGroup, h *handler.Handlers)
 		rules.POST("", h.Admin.ErrorPassthrough.Create)
 		rules.PUT("/:id", h.Admin.ErrorPassthrough.Update)
 		rules.DELETE("/:id", h.Admin.ErrorPassthrough.Delete)
+	}
+}
+
+func registerUsageScriptRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	scripts := admin.Group("/usage-scripts")
+	{
+		scripts.GET("", h.Admin.UsageScript.List)
+		scripts.POST("", h.Admin.UsageScript.Create)
+		scripts.PUT("/:id", h.Admin.UsageScript.Update)
+		scripts.DELETE("/:id", h.Admin.UsageScript.Delete)
 	}
 }

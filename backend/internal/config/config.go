@@ -77,6 +77,7 @@ type Config struct {
 	UsageCleanup            UsageCleanupConfig            `mapstructure:"usage_cleanup"`
 	Concurrency             ConcurrencyConfig             `mapstructure:"concurrency"`
 	TokenRefresh            TokenRefreshConfig            `mapstructure:"token_refresh"`
+	ScriptUsageCheck        ScriptUsageCheckConfig        `mapstructure:"script_usage_check"`
 	Sora                    SoraConfig                    `mapstructure:"sora"`
 	RunMode                 string                        `mapstructure:"run_mode" yaml:"run_mode"`
 	Timezone                string                        `mapstructure:"timezone"` // e.g. "Asia/Shanghai", "UTC"
@@ -199,6 +200,13 @@ type TokenRefreshConfig struct {
 	RetryBackoffSeconds int `mapstructure:"retry_backoff_seconds"`
 	// 是否允许 OpenAI 刷新器同步覆盖关联的 Sora 账号 token（默认关闭）
 	SyncLinkedSoraAccounts bool `mapstructure:"sync_linked_sora_accounts"`
+}
+
+type ScriptUsageCheckConfig struct {
+	// 是否启用脚本用量检查
+	Enabled bool `mapstructure:"enabled"`
+	// 检查间隔（秒）
+	IntervalSeconds int `mapstructure:"interval_seconds"`
 }
 
 type PricingConfig struct {
@@ -1488,6 +1496,10 @@ func setDefaults() {
 	viper.SetDefault("token_refresh.max_retries", 3)                   // 最多重试3次
 	viper.SetDefault("token_refresh.retry_backoff_seconds", 2)         // 重试退避基础2秒
 	viper.SetDefault("token_refresh.sync_linked_sora_accounts", false) // 默认不跨平台覆盖 Sora token
+
+	// ScriptUsageCheck
+	viper.SetDefault("script_usage_check.enabled", true)
+	viper.SetDefault("script_usage_check.interval_seconds", 120) // 默认 2 分钟
 
 	// Gemini OAuth - configure via environment variables or config file
 	// GEMINI_OAUTH_CLIENT_ID and GEMINI_OAUTH_CLIENT_SECRET

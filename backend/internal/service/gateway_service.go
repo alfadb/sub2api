@@ -487,7 +487,8 @@ type ClaudeUsage struct {
 type ForwardResult struct {
 	RequestID        string
 	Usage            ClaudeUsage
-	Model            string
+	Model            string // 用户请求的原始模型名
+	UpstreamModel    string // 实际发往上游的模型名（空字符串表示与 Model 相同）
 	Stream           bool
 	Duration         time.Duration
 	FirstTokenMs     *int // 首字时间（流式请求）
@@ -3977,6 +3978,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 
 	if account != nil && account.IsAnthropicAPIKeyPassthroughEnabled() {
 		passthroughBody := parsed.Body
+		passthroughOriginalModel := parsed.Model
 		passthroughModel := parsed.Model
 		if passthroughModel != "" {
 			if mappedModel := account.GetMappedModel(passthroughModel); mappedModel != passthroughModel {
@@ -3985,7 +3987,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 				passthroughModel = mappedModel
 			}
 		}
-		return s.forwardAnthropicAPIKeyPassthrough(ctx, c, account, passthroughBody, passthroughModel, parsed.Stream, startTime)
+		return s.forwardAnthropicAPIKeyPassthrough(ctx, c, account, passthroughBody, passthroughOriginalModel, passthroughModel, parsed.Stream, startTime)
 	}
 
 	if account != nil && account.IsBedrock() {
@@ -4505,7 +4507,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		}
 	}
 
-	return &ForwardResult{
+	fr := &ForwardResult{
 		RequestID:        resp.Header.Get("x-request-id"),
 		Usage:            *usage,
 		Model:            originalModel, // 使用原始模型用于计费和日志
@@ -4513,7 +4515,11 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		Duration:         time.Since(startTime),
 		FirstTokenMs:     firstTokenMs,
 		ClientDisconnect: clientDisconnect,
-	}, nil
+	}
+	if reqModel != originalModel {
+		fr.UpstreamModel = reqModel
+	}
+	return fr, nil
 }
 
 func (s *GatewayService) forwardAnthropicAPIKeyPassthrough(
@@ -4521,6 +4527,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthrough(
 	c *gin.Context,
 	account *Account,
 	body []byte,
+	originalModel string,
 	reqModel string,
 	reqStream bool,
 	startTime time.Time,
@@ -4727,15 +4734,19 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthrough(
 		usage = &ClaudeUsage{}
 	}
 
-	return &ForwardResult{
+	fr := &ForwardResult{
 		RequestID:        resp.Header.Get("x-request-id"),
 		Usage:            *usage,
-		Model:            reqModel,
+		Model:            originalModel,
 		Stream:           reqStream,
 		Duration:         time.Since(startTime),
 		FirstTokenMs:     firstTokenMs,
 		ClientDisconnect: clientDisconnect,
-	}, nil
+	}
+	if reqModel != originalModel {
+		fr.UpstreamModel = reqModel
+	}
+	return fr, nil
 }
 
 func (s *GatewayService) buildUpstreamRequestAnthropicAPIKeyPassthrough(
@@ -7470,7 +7481,11 @@ func (s *GatewayService) RecordUsage(ctx context.Context, input *RecordUsageInpu
 	} else if result.MediaType == "prompt" {
 		cost = &CostBreakdown{}
 	} else if result.ImageCount > 0 {
-		// 图片生成计费
+		// 图片生成计费：使用上游模型名（映射后的模型名）查找价格
+		billingModel := result.Model
+		if result.UpstreamModel != "" {
+			billingModel = result.UpstreamModel
+		}
 		var groupConfig *ImagePriceConfig
 		if apiKey.Group != nil {
 			groupConfig = &ImagePriceConfig{
@@ -7479,9 +7494,13 @@ func (s *GatewayService) RecordUsage(ctx context.Context, input *RecordUsageInpu
 				Price4K: apiKey.Group.ImagePrice4K,
 			}
 		}
-		cost = s.billingService.CalculateImageCost(result.Model, result.ImageSize, result.ImageCount, groupConfig, multiplier)
+		cost = s.billingService.CalculateImageCost(billingModel, result.ImageSize, result.ImageCount, groupConfig, multiplier)
 	} else {
-		// Token 计费
+		// Token 计费：使用上游模型名（映射后的模型名）查找价格
+		billingModel := result.Model
+		if result.UpstreamModel != "" {
+			billingModel = result.UpstreamModel
+		}
 		tokens := UsageTokens{
 			InputTokens:           result.Usage.InputTokens,
 			OutputTokens:          result.Usage.OutputTokens,
@@ -7491,7 +7510,7 @@ func (s *GatewayService) RecordUsage(ctx context.Context, input *RecordUsageInpu
 			CacheCreation1hTokens: result.Usage.CacheCreation1hTokens,
 		}
 		var err error
-		cost, err = s.billingService.CalculateCost(result.Model, tokens, multiplier)
+		cost, err = s.billingService.CalculateCost(billingModel, tokens, multiplier)
 		if err != nil {
 			logger.LegacyPrintf("service.gateway", "Calculate cost failed: %v", err)
 			cost = &CostBreakdown{ActualCost: 0}
@@ -7517,12 +7536,17 @@ func (s *GatewayService) RecordUsage(ctx context.Context, input *RecordUsageInpu
 	}
 	accountRateMultiplier := account.BillingRateMultiplier()
 	requestID := resolveUsageBillingRequestID(ctx, result.RequestID)
+	var upstreamModel *string
+	if result.UpstreamModel != "" {
+		upstreamModel = &result.UpstreamModel
+	}
 	usageLog := &UsageLog{
 		UserID:                user.ID,
 		APIKeyID:              apiKey.ID,
 		AccountID:             account.ID,
 		RequestID:             requestID,
 		Model:                 result.Model,
+		UpstreamModel:         upstreamModel,
 		InputTokens:           result.Usage.InputTokens,
 		OutputTokens:          result.Usage.OutputTokens,
 		CacheCreationTokens:   result.Usage.CacheCreationInputTokens,
@@ -7648,6 +7672,12 @@ func (s *GatewayService) RecordUsageWithLongContext(ctx context.Context, input *
 
 	var cost *CostBreakdown
 
+	// 使用上游模型名（映射后的模型名）查找价格
+	billingModelLC := result.Model
+	if result.UpstreamModel != "" {
+		billingModelLC = result.UpstreamModel
+	}
+
 	// 根据请求类型选择计费方式
 	if result.ImageCount > 0 {
 		// 图片生成计费
@@ -7659,7 +7689,7 @@ func (s *GatewayService) RecordUsageWithLongContext(ctx context.Context, input *
 				Price4K: apiKey.Group.ImagePrice4K,
 			}
 		}
-		cost = s.billingService.CalculateImageCost(result.Model, result.ImageSize, result.ImageCount, groupConfig, multiplier)
+		cost = s.billingService.CalculateImageCost(billingModelLC, result.ImageSize, result.ImageCount, groupConfig, multiplier)
 	} else {
 		// Token 计费（使用长上下文计费方法）
 		tokens := UsageTokens{
@@ -7671,7 +7701,7 @@ func (s *GatewayService) RecordUsageWithLongContext(ctx context.Context, input *
 			CacheCreation1hTokens: result.Usage.CacheCreation1hTokens,
 		}
 		var err error
-		cost, err = s.billingService.CalculateCostWithLongContext(result.Model, tokens, multiplier, input.LongContextThreshold, input.LongContextMultiplier)
+		cost, err = s.billingService.CalculateCostWithLongContext(billingModelLC, tokens, multiplier, input.LongContextThreshold, input.LongContextMultiplier)
 		if err != nil {
 			logger.LegacyPrintf("service.gateway", "Calculate cost failed: %v", err)
 			cost = &CostBreakdown{ActualCost: 0}
@@ -7693,12 +7723,17 @@ func (s *GatewayService) RecordUsageWithLongContext(ctx context.Context, input *
 	}
 	accountRateMultiplier := account.BillingRateMultiplier()
 	requestID := resolveUsageBillingRequestID(ctx, result.RequestID)
+	var upstreamModelLC *string
+	if result.UpstreamModel != "" {
+		upstreamModelLC = &result.UpstreamModel
+	}
 	usageLog := &UsageLog{
 		UserID:                user.ID,
 		APIKeyID:              apiKey.ID,
 		AccountID:             account.ID,
 		RequestID:             requestID,
 		Model:                 result.Model,
+		UpstreamModel:         upstreamModelLC,
 		InputTokens:           result.Usage.InputTokens,
 		OutputTokens:          result.Usage.OutputTokens,
 		CacheCreationTokens:   result.Usage.CacheCreationInputTokens,

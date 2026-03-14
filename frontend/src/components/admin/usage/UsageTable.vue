@@ -25,8 +25,13 @@
           <span class="text-sm text-gray-900 dark:text-white">{{ row.account?.name || '-' }}</span>
         </template>
 
-        <template #cell-model="{ value }">
-          <span class="font-medium text-gray-900 dark:text-white">{{ value }}</span>
+        <template #cell-model="{ value, row }">
+          <div>
+            <span class="font-medium text-gray-900 dark:text-white">{{ value }}</span>
+            <div v-if="row.upstream_model && row.upstream_model !== value" class="text-xs text-gray-400 dark:text-gray-500">
+              → {{ row.upstream_model }}
+            </div>
+          </div>
         </template>
 
         <template #cell-reasoning_effort="{ row }">

@@ -1692,15 +1692,19 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 		firstTokenMs = streamRes.firstTokenMs
 	}
 
-	return &ForwardResult{
+	fr := &ForwardResult{
 		RequestID:        requestID,
 		Usage:            *usage,
-		Model:            billingModel, // 使用映射模型用于计费和日志
+		Model:            originalModel,
 		Stream:           claudeReq.Stream,
 		Duration:         time.Since(startTime),
 		FirstTokenMs:     firstTokenMs,
 		ClientDisconnect: clientDisconnect,
-	}, nil
+	}
+	if billingModel != originalModel {
+		fr.UpstreamModel = billingModel
+	}
+	return fr, nil
 }
 
 func isSignatureRelatedError(respBody []byte) bool {
@@ -2382,17 +2386,21 @@ handleSuccess:
 		imageCount = 1
 	}
 
-	return &ForwardResult{
+	fr := &ForwardResult{
 		RequestID:        requestID,
 		Usage:            *usage,
-		Model:            billingModel,
+		Model:            originalModel,
 		Stream:           stream,
 		Duration:         time.Since(startTime),
 		FirstTokenMs:     firstTokenMs,
 		ClientDisconnect: clientDisconnect,
 		ImageCount:       imageCount,
 		ImageSize:        imageSize,
-	}, nil
+	}
+	if billingModel != originalModel {
+		fr.UpstreamModel = billingModel
+	}
+	return fr, nil
 }
 
 func (s *AntigravityGatewayService) shouldFailoverUpstreamError(statusCode int) bool {

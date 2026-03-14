@@ -41,6 +41,12 @@ func (UsageLog) Fields() []ent.Field {
 		field.String("model").
 			MaxLen(100).
 			NotEmpty(),
+		// upstream_model: 实际发往上游的模型名（经过模型映射后）。
+		// NULL 表示无映射（与 model 相同）。
+		field.String("upstream_model").
+			MaxLen(100).
+			Optional().
+			Nillable(),
 		field.Int64("group_id").
 			Optional().
 			Nillable(),

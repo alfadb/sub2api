@@ -99,7 +99,8 @@ type UsageLog struct {
 	RequestID string
 	Model     string
 	// ServiceTier records the OpenAI service tier used for billing, e.g. "priority" / "flex".
-	ServiceTier *string
+	ServiceTier   *string
+	UpstreamModel *string // 实际发往上游的模型名（nil 表示与 Model 相同，无映射）
 	// ReasoningEffort is the request's reasoning effort level (OpenAI Responses API),
 	// e.g. "low" / "medium" / "high" / "xhigh". Nil means not provided / not applicable.
 	ReasoningEffort *string

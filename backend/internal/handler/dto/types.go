@@ -387,6 +387,9 @@ type UsageLog struct {
 type AdminUsageLog struct {
 	UsageLog
 
+	// UpstreamModel 实际发往上游的模型名（仅管理员可见，nil 表示与 Model 相同）
+	UpstreamModel *string `json:"upstream_model,omitempty"`
+
 	// AccountRateMultiplier 账号计费倍率快照（nil 表示按 1.0 处理）
 	AccountRateMultiplier *float64 `json:"account_rate_multiplier"`
 

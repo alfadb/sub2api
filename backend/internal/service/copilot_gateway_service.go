@@ -34,20 +34,27 @@ type usageExtractor func(u gjson.Result) ClaudeUsage
 
 // chatCompletionsUsage extracts usage with prompt_tokens/completion_tokens field names.
 // Also extracts prompt_tokens_details.cached_tokens for cache hit tracking.
+// Note: OpenAI's prompt_tokens includes cached tokens, but our billing expects
+// InputTokens to be non-cached only (cache is billed separately via CacheReadInputTokens).
 func chatCompletionsUsage(u gjson.Result) ClaudeUsage {
+	promptTokens := int(u.Get("prompt_tokens").Int())
 	cachedTokens := int(u.Get("prompt_tokens_details.cached_tokens").Int())
 	return ClaudeUsage{
-		InputTokens:          int(u.Get("prompt_tokens").Int()),
+		InputTokens:          promptTokens - cachedTokens,
 		OutputTokens:         int(u.Get("completion_tokens").Int()),
 		CacheReadInputTokens: cachedTokens,
 	}
 }
 
 // responsesUsage extracts usage with input_tokens/output_tokens field names.
+// OpenAI Responses API: input_tokens includes cached, subtract cached for billing consistency.
 func responsesUsage(u gjson.Result) ClaudeUsage {
+	inputTokens := int(u.Get("input_tokens").Int())
+	cachedTokens := int(u.Get("input_tokens_details.cached_tokens").Int())
 	return ClaudeUsage{
-		InputTokens:  int(u.Get("input_tokens").Int()),
-		OutputTokens: int(u.Get("output_tokens").Int()),
+		InputTokens:          inputTokens - cachedTokens,
+		OutputTokens:         int(u.Get("output_tokens").Int()),
+		CacheReadInputTokens: cachedTokens,
 	}
 }
 
@@ -331,6 +338,10 @@ func (s *CopilotGatewayService) ForwardMessages(ctx context.Context, c *gin.Cont
 		return nil, fmt.Errorf("get copilot access token: %w", err)
 	}
 
+	// Sanitize request body: remove empty text blocks and thinking blocks that
+	// Copilot upstream rejects (e.g. "text content blocks must be non-empty").
+	body = FilterThinkingBlocksForRetry(body)
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, copilotUpstreamMessagesURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create upstream request: %w", err)
@@ -388,19 +399,24 @@ func (s *CopilotGatewayService) setCopilotMessagesHeaders(req *http.Request, c *
 	}
 }
 
-// filterAnthropicBeta removes the "claude-code-20250219" token from an
-// Anthropic-Beta header value since Copilot's /v1/messages endpoint doesn't
-// recognise it.
+// copilotSupportedBetas is the whitelist of Anthropic-Beta tokens that
+// Copilot's upstream actually supports. Unknown tokens cause 400 errors
+// (e.g. "unsupported beta header(s): context-1m-2025-08-07").
+var copilotSupportedBetas = map[string]bool{
+	"interleaved-thinking-2025-05-14": true,
+}
+
+// filterAnthropicBeta keeps only Copilot-supported beta tokens from an
+// Anthropic-Beta header value. Uses a whitelist approach because Copilot
+// rejects unknown tokens with 400 invalid_request_body.
 func filterAnthropicBeta(beta string) string {
-	const dropToken = "claude-code-20250219"
 	parts := strings.Split(beta, ",")
 	out := make([]string, 0, len(parts))
 	for _, p := range parts {
 		p = strings.TrimSpace(p)
-		if p == "" || p == dropToken {
-			continue
+		if copilotSupportedBetas[p] {
+			out = append(out, p)
 		}
-		out = append(out, p)
 	}
 	return strings.Join(out, ",")
 }
@@ -479,7 +495,7 @@ func (s *CopilotGatewayService) handleMessagesStreamResponse(c *gin.Context, res
 					inputTokens := int(u.Get("input_tokens").Int())
 					cacheCreation := int(u.Get("cache_creation_input_tokens").Int())
 					cacheRead := int(u.Get("cache_read_input_tokens").Int())
-					usage.InputTokens = inputTokens + cacheCreation + cacheRead
+					usage.InputTokens = inputTokens
 					usage.CacheCreationInputTokens = cacheCreation
 					usage.CacheReadInputTokens = cacheRead
 				}
@@ -539,16 +555,11 @@ func extractAnthropicUsage(body []byte) ClaudeUsage {
 	if !u.Exists() {
 		return ClaudeUsage{}
 	}
-	inputTokens := int(u.Get("input_tokens").Int())
-	outputTokens := int(u.Get("output_tokens").Int())
-	cacheCreation := int(u.Get("cache_creation_input_tokens").Int())
-	cacheRead := int(u.Get("cache_read_input_tokens").Int())
-	promptTokens := inputTokens + cacheCreation + cacheRead
 	return ClaudeUsage{
-		InputTokens:              promptTokens,
-		OutputTokens:             outputTokens,
-		CacheCreationInputTokens: cacheCreation,
-		CacheReadInputTokens:     cacheRead,
+		InputTokens:              int(u.Get("input_tokens").Int()),
+		OutputTokens:             int(u.Get("output_tokens").Int()),
+		CacheCreationInputTokens: int(u.Get("cache_creation_input_tokens").Int()),
+		CacheReadInputTokens:     int(u.Get("cache_read_input_tokens").Int()),
 	}
 }
 

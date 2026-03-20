@@ -179,7 +179,7 @@ const formatRequests = computed(() => {
 })
 
 const formatTokens = computed(() => {
-  if (!props.windowStats) return ''
+  if (!props.windowStats || props.windowStats.tokens <= 0) return '-'
   return formatCompactNumber(props.windowStats.tokens)
 })
 

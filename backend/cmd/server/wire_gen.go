@@ -135,7 +135,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	identityCache := repository.NewIdentityCache(redisClient)
 	scriptEngine := service.NewScriptEngine()
 	usageScriptRepository := repository.NewUsageScriptRepository(client)
-	accountUsageService := service.NewAccountUsageService(accountRepository, usageLogRepository, claudeUsageFetcher, copilotUsageFetcher, geminiQuotaService, antigravityQuotaFetcher, usageCache, identityCache, scriptEngine, usageScriptRepository)
+	accountUsageService := service.NewAccountUsageService(accountRepository, usageLogRepository, claudeUsageFetcher, copilotUsageFetcher, geminiQuotaService, antigravityQuotaFetcher, usageCache, identityCache, scriptEngine, usageScriptRepository, tempUnschedCache)
 	oAuthRefreshAPI := service.NewOAuthRefreshAPI(accountRepository, geminiTokenCache)
 	geminiTokenProvider := service.ProvideGeminiTokenProvider(accountRepository, geminiTokenCache, geminiOAuthService, oAuthRefreshAPI)
 	gatewayCache := repository.NewGatewayCache(redisClient)

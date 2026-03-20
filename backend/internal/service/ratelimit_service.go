@@ -618,12 +618,45 @@ func (s *RateLimitService) handleAuthError(ctx context.Context, account *Account
 
 // handle403 处理 403 Forbidden 错误
 // Antigravity 平台区分 validation/violation/generic 三种类型，均 SetError 永久禁用；
-// 其他平台保持原有 SetError 行为。
+// 其他平台检测配额不足关键词，触发临时暂停而非 error。
 func (s *RateLimitService) handle403(ctx context.Context, account *Account, upstreamMsg string, responseBody []byte) (shouldDisable bool) {
 	if account.Platform == PlatformAntigravity {
 		return s.handleAntigravity403(ctx, account, upstreamMsg, responseBody)
 	}
-	// 非 Antigravity 平台：保持原有行为
+
+	// 检测配额不足关键词（非 Antigravity 平台）
+	// 这类错误通常是临时性的，配额恢复后可继续使用
+	lowerMsg := strings.ToLower(upstreamMsg)
+	if strings.Contains(lowerMsg, "quota is not enough") ||
+		strings.Contains(lowerMsg, "insufficient quota") ||
+		strings.Contains(lowerMsg, "quota exceeded") ||
+		strings.Contains(lowerMsg, "not enough quota") {
+		// 触发临时暂停，使用脚本引擎的重置时间或默认 24 小时
+		until := time.Now().Add(24 * time.Hour)
+		reason := "Quota insufficient (403): " + upstreamMsg
+		if err := s.accountRepo.SetTempUnschedulable(ctx, account.ID, until, reason); err != nil {
+			slog.Warn("quota_403_set_temp_unsched_failed", "account_id", account.ID, "error", err)
+		} else {
+			slog.Info("quota_403_account_paused",
+				"account_id", account.ID,
+				"until", until,
+				"upstream_msg", upstreamMsg,
+			)
+		}
+		// 更新 Redis 缓存
+		if s.tempUnschedCache != nil {
+			_ = s.tempUnschedCache.SetTempUnsched(ctx, account.ID, &TempUnschedState{
+				UntilUnix:       until.Unix(),
+				TriggeredAtUnix: time.Now().Unix(),
+				StatusCode:      403,
+				MatchedKeyword:  "quota_is_not_enough",
+				ErrorMessage:    upstreamMsg,
+			})
+		}
+		return true
+	}
+
+	// 其他 403 错误：保持原有 SetError 行为
 	msg := "Access forbidden (403): account may be suspended or lack permissions"
 	if upstreamMsg != "" {
 		msg = "Access forbidden (403): " + upstreamMsg

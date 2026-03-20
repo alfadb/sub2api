@@ -1524,17 +1524,41 @@ func (s *AccountUsageService) getCopilotUsage(ctx context.Context, account *Acco
 			}
 
 			// 超限暂停：utilization >= 100% 时暂停调度到 quota_reset_date
-			if utilization >= 100 && !effectiveQuota.Unlimited && s.tempUnschedCache != nil {
-				_ = s.tempUnschedCache.SetTempUnsched(ctx, int64(account.ID), &TempUnschedState{
-					UntilUnix:       resetAt.Unix(),
-					TriggeredAtUnix: now.Unix(),
-					StatusCode:      429,
-					MatchedKeyword:  "copilot_quota_exhausted",
-					ErrorMessage:    fmt.Sprintf("Copilot monthly quota exhausted: %d/%.0f", usedReqs, effectiveQuota.Entitlement),
-				})
-			} else if utilization < 100 && s.tempUnschedCache != nil {
+			// 必须同时更新数据库和 Redis 缓存，因为调度器只检查数据库字段
+			if utilization >= 100 && !effectiveQuota.Unlimited {
+				reason := fmt.Sprintf("copilot_quota_exhausted: %d/%.0f requests", usedReqs, effectiveQuota.Entitlement)
+				// 先更新数据库（调度器依赖数据库字段判断是否可调度）
+				if err := s.accountRepo.SetTempUnschedulable(ctx, account.ID, resetAt, reason); err != nil {
+					slog.Warn("copilot_quota_set_temp_unsched_db_failed", "account_id", account.ID, "error", err)
+				} else {
+					slog.Info("copilot_quota_exhausted_account_paused",
+						"account_id", account.ID,
+						"utilization", utilization,
+						"reset_at", resetAt,
+						"used_requests", usedReqs,
+						"entitlement", effectiveQuota.Entitlement,
+					)
+				}
+				// 再更新 Redis 缓存（用于前端显示详情）
+				if s.tempUnschedCache != nil {
+					_ = s.tempUnschedCache.SetTempUnsched(ctx, int64(account.ID), &TempUnschedState{
+						UntilUnix:       resetAt.Unix(),
+						TriggeredAtUnix: now.Unix(),
+						StatusCode:      429,
+						MatchedKeyword:  "copilot_quota_exhausted",
+						ErrorMessage:    fmt.Sprintf("Copilot monthly quota exhausted: %d/%.0f", usedReqs, effectiveQuota.Entitlement),
+					})
+				}
+			} else if utilization < 100 {
 				// 配额恢复/重置后自动清除暂停状态
-				_ = s.tempUnschedCache.DeleteTempUnsched(ctx, int64(account.ID))
+				// 清除数据库（调度器依赖数据库字段）
+				if err := s.accountRepo.ClearTempUnschedulable(ctx, account.ID); err != nil {
+					slog.Warn("copilot_quota_clear_temp_unsched_db_failed", "account_id", account.ID, "error", err)
+				}
+				// 清除 Redis 缓存
+				if s.tempUnschedCache != nil {
+					_ = s.tempUnschedCache.DeleteTempUnsched(ctx, int64(account.ID))
+				}
 			}
 		} else {
 			log.Printf("[ERROR] Failed to parse quota_reset_date for account %d: %v", account.ID, parseErr)

@@ -317,6 +317,7 @@ type AccountUsageService struct {
 	tlsFPProfileService     *TLSFingerprintProfileService
 	scriptEngine            *ScriptEngine
 	usageScriptRepo         UsageScriptRepository
+	tempUnschedCache        TempUnschedCache
 }
 
 // NewAccountUsageService 创建AccountUsageService实例
@@ -332,6 +333,7 @@ func NewAccountUsageService(
 	tlsFPProfileService *TLSFingerprintProfileService,
 	scriptEngine *ScriptEngine,
 	usageScriptRepo UsageScriptRepository,
+	tempUnschedCache TempUnschedCache,
 ) *AccountUsageService {
 	return &AccountUsageService{
 		accountRepo:             accountRepo,
@@ -345,6 +347,7 @@ func NewAccountUsageService(
 		tlsFPProfileService:     tlsFPProfileService,
 		scriptEngine:            scriptEngine,
 		usageScriptRepo:         usageScriptRepo,
+		tempUnschedCache:        tempUnschedCache,
 	}
 }
 
@@ -1519,6 +1522,20 @@ func (s *AccountUsageService) getCopilotUsage(ctx context.Context, account *Acco
 				UsedRequests:     usedReqs,
 				LimitRequests:    int64(effectiveQuota.Entitlement),
 			}
+
+			// 超限暂停：utilization >= 100% 时暂停调度到 quota_reset_date
+			if utilization >= 100 && !effectiveQuota.Unlimited && s.tempUnschedCache != nil {
+				_ = s.tempUnschedCache.SetTempUnsched(ctx, int64(account.ID), &TempUnschedState{
+					UntilUnix:       resetAt.Unix(),
+					TriggeredAtUnix: now.Unix(),
+					StatusCode:      429,
+					MatchedKeyword:  "copilot_quota_exhausted",
+					ErrorMessage:    fmt.Sprintf("Copilot monthly quota exhausted: %d/%.0f", usedReqs, effectiveQuota.Entitlement),
+				})
+			} else if utilization < 100 && s.tempUnschedCache != nil {
+				// 配额恢复/重置后自动清除暂停状态
+				_ = s.tempUnschedCache.DeleteTempUnsched(ctx, int64(account.ID))
+			}
 		} else {
 			log.Printf("[ERROR] Failed to parse quota_reset_date for account %d: %v", account.ID, parseErr)
 		}
@@ -1572,9 +1589,25 @@ func (s *AccountUsageService) addCopilotLocalUsage(ctx context.Context, account 
 				RemainingSeconds: int(time.Until(monthResetAt).Seconds()),
 			}
 		}
+	} else if usage.CopilotMonthly.WindowStats == nil {
+		// API 已设置 CopilotMonthly（有配额数据），补充本地 WindowStats（token/cost 统计）
+		monthStats, err := s.usageLogRepo.GetAccountStatsAggregated(ctx, account.ID, monthStart, now)
+		if err != nil {
+			log.Printf("Failed to get copilot month window stats for account %d: %v", account.ID, err)
+		} else if monthStats != nil {
+			accountCost := 0.0
+			if monthStats.TotalAccountCost != nil {
+				accountCost = *monthStats.TotalAccountCost
+			}
+			usage.CopilotMonthly.WindowStats = &WindowStats{
+				Requests:     usage.CopilotMonthly.UsedRequests, // 用 API 的请求数（更准确）
+				Tokens:       monthStats.TotalTokens,
+				Cost:         accountCost,
+				StandardCost: monthStats.TotalCost,
+				UserCost:     monthStats.TotalActualCost,
+			}
+		}
 	}
-	// 注意：如果 API 已经设置了 CopilotMonthly，不覆盖它，也不添加 WindowStats
-	// 因为 API 返回的配额信息（UsedRequests/LimitRequests）已经足够显示
 
 	return usage, nil
 }

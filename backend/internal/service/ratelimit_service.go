@@ -788,6 +788,17 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 			return
 		}
 
+		// Copilot 平台：429 通常是月度配额耗尽，恢复时间由 account_usage_service
+		// 通过 TempUnschedCache 设置（基于 quota_reset_date）。此处不用短 TTL 覆盖，
+		// 避免与配额暂停机制竞争导致前端显示恢复时间只有几分钟。
+		if account.Platform == PlatformCopilot {
+			slog.Warn("rate_limit_429_no_reset_time_skipped",
+				"account_id", account.ID,
+				"platform", account.Platform,
+				"reason", "copilot 429 handled by quota-based TempUnsched, skipping short TTL")
+			return
+		}
+
 		// 其他平台：没有重置时间，使用默认5分钟
 		resetAt := time.Now().Add(5 * time.Minute)
 		slog.Warn("rate_limit_no_reset_time", "account_id", account.ID, "platform", account.Platform, "using_default", "5m")

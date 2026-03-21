@@ -414,6 +414,9 @@
           :label="win.name"
           :utilization="win.utilization * 100"
           :resets-at="win.resets_at ? new Date(win.resets_at * 1000).toISOString() : null"
+          :used="win.used"
+          :limit="win.limit"
+          :unit="win.unit"
           color="amber"
         />
       </div>

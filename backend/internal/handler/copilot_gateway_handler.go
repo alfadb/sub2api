@@ -279,7 +279,7 @@ func (h *CopilotGatewayHandler) handleForward(c *gin.Context, endpoint string, f
 
 	for {
 		reqLog.Debug("copilot.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
-		selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), apiKey.GroupID, "", reqModel, failedAccountIDs, "")
+		selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), apiKey.GroupID, "", reqModel, failedAccountIDs, "", int64(0))
 		if err != nil {
 			reqLog.Warn("copilot.account_select_failed",
 				zap.Error(err),

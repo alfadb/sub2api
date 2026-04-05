@@ -218,7 +218,7 @@ func (h *ResponsesHandler) HandleResponses(c *gin.Context) {
 
 	for {
 		reqLog.Debug("responses.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
-		selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), apiKey.GroupID, "", reqModel, failedAccountIDs, "")
+		selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), apiKey.GroupID, "", reqModel, failedAccountIDs, "", int64(0))
 		if err != nil {
 			reqLog.Warn("responses.account_select_failed",
 				zap.Error(err),

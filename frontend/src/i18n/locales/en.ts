@@ -358,6 +358,8 @@ export default {
     redeemCodes: 'Redeem Codes',
     ops: 'Ops',
     promoCodes: 'Promo Codes',
+    dataManagement: 'Data Management',
+    usageScripts: 'Usage Scripts',
     settings: 'Settings',
     myAccount: 'My Account',
     lightMode: 'Light Mode',
@@ -1979,6 +1981,7 @@ export default {
         openai: 'OpenAI',
         gemini: 'Gemini',
         antigravity: 'Antigravity',
+        copilot: 'Copilot'
       },
       deleteConfirm:
         "Are you sure you want to delete '{name}'? All associated API keys will no longer belong to any group.",
@@ -2576,6 +2579,7 @@ export default {
         openai: 'OpenAI',
         gemini: 'Gemini',
         antigravity: 'Antigravity',
+        copilot: 'Copilot'
       },
       types: {
         oauth: 'OAuth',
@@ -3273,6 +3277,26 @@ export default {
                     validateAndCreate: 'Validate & Create',
                     pleaseEnterRefreshToken: 'Please enter Refresh Token',
                     failedToValidateRT: 'Failed to validate Refresh Token'
+                  },
+                  // Copilot specific (Device Code Flow)
+                  copilot: {
+                    title: 'GitHub Copilot Authorization',
+                    deviceCodeTitle: 'GitHub Device Code',
+                    deviceCodeDesc: 'Connect Copilot via GitHub OAuth authorization',
+                    connectButton: 'Connect GitHub Copilot',
+                    startingFlow: 'Initiating Device Code Flow...',
+                    failedToStartFlow: 'Failed to initiate GitHub Device Code Flow',
+                    enterCodePrompt: 'Enter the code below on GitHub to authorize:',
+                    openGitHub: 'Open GitHub Authorization',
+                    copyCode: 'Copy Code',
+                    codeCopied: 'Code copied to clipboard',
+                    waitingForAuth: 'Waiting for authorization...',
+                    waitingForAuthDesc: 'Please complete authorization in your browser. This page will update automatically.',
+                    noDeviceCode: 'No device code available. Please initiate the flow first.',
+                    codeExpired: 'Authorization code expired. Please try again.',
+                    authFailed: 'GitHub authorization failed',
+                    authSuccess: 'GitHub Copilot authorized successfully',
+                    accountCreated: 'Copilot account created successfully'
                   }
                 },      // Gemini specific (platform-wide)
       gemini: {
@@ -5797,6 +5821,51 @@ export default {
       loadFailed: 'Failed to load profiles',
       saveFailed: 'Failed to save profile',
       deleteFailed: 'Failed to delete profile'
+    }
+  },
+
+  usageScripts: {
+    title: 'Usage Scripts',
+    description: 'Manage Starlark scripts for third-party relay usage monitoring',
+    create: 'Create Script',
+    edit: 'Edit Script',
+    noScripts: 'No usage scripts configured',
+    createFirst: 'Create your first usage script',
+
+    columns: {
+      baseUrlHost: 'Base URL Host',
+      accountType: 'Account Type',
+      script: 'Script',
+      enabled: 'Enabled',
+      createdAt: 'Created At',
+      actions: 'Actions'
+    },
+
+    form: {
+      baseUrlHost: 'Base URL Host',
+      baseUrlHostPlaceholder: 'e.g., https://api.example.com',
+      baseUrlHostHint: 'Domain-level match (scheme://host)',
+      accountType: 'Account Type',
+      accountTypePlaceholder: 'Select account type',
+      script: 'Starlark Script',
+      scriptPlaceholder: 'def fetch_usage(ctx):\n    ...',
+      enabled: 'Enabled'
+    },
+
+    accountTypes: {
+      oauth: 'OAuth',
+      apikey: 'API Key',
+      'setup-token': 'Setup Token'
+    },
+
+    messages: {
+      created: 'Usage script created successfully',
+      updated: 'Usage script updated successfully',
+      deleted: 'Usage script deleted successfully',
+      deleteConfirm: 'Are you sure you want to delete this usage script?',
+      failedToLoad: 'Failed to load usage scripts',
+      failedToSave: 'Failed to save usage script',
+      failedToDelete: 'Failed to delete usage script'
     }
   },
 

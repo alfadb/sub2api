@@ -468,7 +468,7 @@ export interface PaginationConfig {
 
 // ==================== API Key & Group Types ====================
 
-export type GroupPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity'
+export type GroupPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'sora' | 'copilot'
 
 export type SubscriptionType = 'standard' | 'subscription'
 
@@ -642,7 +642,7 @@ export interface UpdateGroupRequest {
 
 // ==================== Account & Proxy Types ====================
 
-export type AccountPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity'
+export type AccountPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'sora' | 'copilot'
 export type AccountType = 'oauth' | 'setup-token' | 'apikey' | 'upstream' | 'bedrock' | 'service_account'
 export type OAuthAddMethod = 'oauth' | 'setup-token'
 export type ProxyProtocol = 'http' | 'https' | 'socks5' | 'socks5h'
@@ -918,6 +918,21 @@ export interface AccountUsageInfo {
   error_code?: string
 
   error?: string            // usage 获取失败时的错误信息
+
+  // Copilot usage from GitHub internal API
+  copilot_daily?: UsageProgress | null
+  copilot_monthly?: UsageProgress | null
+
+  script_windows?: ScriptUsageWindow[] | null
+}
+
+export interface ScriptUsageWindow {
+  name: string
+  utilization: number // 0.0~1.0+
+  resets_at?: number | null // unix timestamp
+  used?: number | null
+  limit?: number | null
+  unit?: string // tokens/requests/credits
 }
 
 // OpenAI Codex usage snapshot (from response headers)

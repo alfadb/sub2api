@@ -36,12 +36,17 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 		// Business layer ProviderSets
 		repository.ProviderSet,
 		service.ProviderSet,
-		payment.ProviderSet,
 		middleware.ProviderSet,
 		handler.ProviderSet,
 
 		// Server layer ProviderSet
 		server.ProviderSet,
+
+		// Payment providers
+		payment.ProvideRegistry,
+		payment.ProvideEncryptionKey,
+		payment.ProvideDefaultLoadBalancer,
+		wire.Bind(new(payment.LoadBalancer), new(*payment.DefaultLoadBalancer)),
 
 		// Privacy client factory for OpenAI training opt-out
 		providePrivacyClientFactory,
@@ -98,6 +103,8 @@ func provideCleanup(
 	backupSvc *service.BackupService,
 	paymentOrderExpiry *service.PaymentOrderExpiryService,
 	channelMonitorRunner *service.ChannelMonitorRunner,
+	opencodeVersion *service.OpenCodeVersionService,
+	scriptUsageCheck *service.ScriptUsageCheckService,
 ) func() {
 	return func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -243,6 +250,18 @@ func provideCleanup(
 			{"ChannelMonitorRunner", func() error {
 				if channelMonitorRunner != nil {
 					channelMonitorRunner.Stop()
+				}
+				return nil
+			}},
+			{"OpenCodeVersionService", func() error {
+				if opencodeVersion != nil {
+					opencodeVersion.Stop()
+				}
+				return nil
+			}},
+			{"ScriptUsageCheckService", func() error {
+				if scriptUsageCheck != nil {
+					scriptUsageCheck.Stop()
 				}
 				return nil
 			}},

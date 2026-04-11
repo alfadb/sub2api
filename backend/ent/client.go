@@ -36,6 +36,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/tlsfingerprintprofile"
 	"github.com/Wei-Shaw/sub2api/ent/usagecleanuptask"
 	"github.com/Wei-Shaw/sub2api/ent/usagelog"
+	"github.com/Wei-Shaw/sub2api/ent/usagescript"
 	"github.com/Wei-Shaw/sub2api/ent/user"
 	"github.com/Wei-Shaw/sub2api/ent/userallowedgroup"
 	"github.com/Wei-Shaw/sub2api/ent/userattributedefinition"
@@ -92,6 +93,8 @@ type Client struct {
 	UsageCleanupTask *UsageCleanupTaskClient
 	// UsageLog is the client for interacting with the UsageLog builders.
 	UsageLog *UsageLogClient
+	// UsageScript is the client for interacting with the UsageScript builders.
+	UsageScript *UsageScriptClient
 	// User is the client for interacting with the User builders.
 	User *UserClient
 	// UserAllowedGroup is the client for interacting with the UserAllowedGroup builders.
@@ -134,6 +137,7 @@ func (c *Client) init() {
 	c.TLSFingerprintProfile = NewTLSFingerprintProfileClient(c.config)
 	c.UsageCleanupTask = NewUsageCleanupTaskClient(c.config)
 	c.UsageLog = NewUsageLogClient(c.config)
+	c.UsageScript = NewUsageScriptClient(c.config)
 	c.User = NewUserClient(c.config)
 	c.UserAllowedGroup = NewUserAllowedGroupClient(c.config)
 	c.UserAttributeDefinition = NewUserAttributeDefinitionClient(c.config)
@@ -252,6 +256,7 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		TLSFingerprintProfile:   NewTLSFingerprintProfileClient(cfg),
 		UsageCleanupTask:        NewUsageCleanupTaskClient(cfg),
 		UsageLog:                NewUsageLogClient(cfg),
+		UsageScript:             NewUsageScriptClient(cfg),
 		User:                    NewUserClient(cfg),
 		UserAllowedGroup:        NewUserAllowedGroupClient(cfg),
 		UserAttributeDefinition: NewUserAttributeDefinitionClient(cfg),
@@ -297,6 +302,7 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		TLSFingerprintProfile:   NewTLSFingerprintProfileClient(cfg),
 		UsageCleanupTask:        NewUsageCleanupTaskClient(cfg),
 		UsageLog:                NewUsageLogClient(cfg),
+		UsageScript:             NewUsageScriptClient(cfg),
 		User:                    NewUserClient(cfg),
 		UserAllowedGroup:        NewUserAllowedGroupClient(cfg),
 		UserAttributeDefinition: NewUserAttributeDefinitionClient(cfg),
@@ -335,7 +341,7 @@ func (c *Client) Use(hooks ...Hook) {
 		c.ErrorPassthroughRule, c.Group, c.IdempotencyRecord, c.PaymentAuditLog,
 		c.PaymentOrder, c.PaymentProviderInstance, c.PromoCode, c.PromoCodeUsage,
 		c.Proxy, c.RedeemCode, c.SecuritySecret, c.Setting, c.SubscriptionPlan,
-		c.TLSFingerprintProfile, c.UsageCleanupTask, c.UsageLog, c.User,
+		c.TLSFingerprintProfile, c.UsageCleanupTask, c.UsageLog, c.UsageScript, c.User,
 		c.UserAllowedGroup, c.UserAttributeDefinition, c.UserAttributeValue,
 		c.UserSubscription,
 	} {
@@ -351,7 +357,7 @@ func (c *Client) Intercept(interceptors ...Interceptor) {
 		c.ErrorPassthroughRule, c.Group, c.IdempotencyRecord, c.PaymentAuditLog,
 		c.PaymentOrder, c.PaymentProviderInstance, c.PromoCode, c.PromoCodeUsage,
 		c.Proxy, c.RedeemCode, c.SecuritySecret, c.Setting, c.SubscriptionPlan,
-		c.TLSFingerprintProfile, c.UsageCleanupTask, c.UsageLog, c.User,
+		c.TLSFingerprintProfile, c.UsageCleanupTask, c.UsageLog, c.UsageScript, c.User,
 		c.UserAllowedGroup, c.UserAttributeDefinition, c.UserAttributeValue,
 		c.UserSubscription,
 	} {
@@ -404,6 +410,8 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.UsageCleanupTask.mutate(ctx, m)
 	case *UsageLogMutation:
 		return c.UsageLog.mutate(ctx, m)
+	case *UsageScriptMutation:
+		return c.UsageScript.mutate(ctx, m)
 	case *UserMutation:
 		return c.User.mutate(ctx, m)
 	case *UserAllowedGroupMutation:
@@ -3683,6 +3691,141 @@ func (c *UsageLogClient) mutate(ctx context.Context, m *UsageLogMutation) (Value
 	}
 }
 
+// UsageScriptClient is a client for the UsageScript schema.
+type UsageScriptClient struct {
+	config
+}
+
+// NewUsageScriptClient returns a client for the UsageScript from the given config.
+func NewUsageScriptClient(c config) *UsageScriptClient {
+	return &UsageScriptClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `usagescript.Hooks(f(g(h())))`.
+func (c *UsageScriptClient) Use(hooks ...Hook) {
+	c.hooks.UsageScript = append(c.hooks.UsageScript, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `usagescript.Intercept(f(g(h())))`.
+func (c *UsageScriptClient) Intercept(interceptors ...Interceptor) {
+	c.inters.UsageScript = append(c.inters.UsageScript, interceptors...)
+}
+
+// Create returns a builder for creating a UsageScript entity.
+func (c *UsageScriptClient) Create() *UsageScriptCreate {
+	mutation := newUsageScriptMutation(c.config, OpCreate)
+	return &UsageScriptCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of UsageScript entities.
+func (c *UsageScriptClient) CreateBulk(builders ...*UsageScriptCreate) *UsageScriptCreateBulk {
+	return &UsageScriptCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *UsageScriptClient) MapCreateBulk(slice any, setFunc func(*UsageScriptCreate, int)) *UsageScriptCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &UsageScriptCreateBulk{err: fmt.Errorf("calling to UsageScriptClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*UsageScriptCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &UsageScriptCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for UsageScript.
+func (c *UsageScriptClient) Update() *UsageScriptUpdate {
+	mutation := newUsageScriptMutation(c.config, OpUpdate)
+	return &UsageScriptUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *UsageScriptClient) UpdateOne(_m *UsageScript) *UsageScriptUpdateOne {
+	mutation := newUsageScriptMutation(c.config, OpUpdateOne, withUsageScript(_m))
+	return &UsageScriptUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *UsageScriptClient) UpdateOneID(id int64) *UsageScriptUpdateOne {
+	mutation := newUsageScriptMutation(c.config, OpUpdateOne, withUsageScriptID(id))
+	return &UsageScriptUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for UsageScript.
+func (c *UsageScriptClient) Delete() *UsageScriptDelete {
+	mutation := newUsageScriptMutation(c.config, OpDelete)
+	return &UsageScriptDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *UsageScriptClient) DeleteOne(_m *UsageScript) *UsageScriptDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *UsageScriptClient) DeleteOneID(id int64) *UsageScriptDeleteOne {
+	builder := c.Delete().Where(usagescript.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &UsageScriptDeleteOne{builder}
+}
+
+// Query returns a query builder for UsageScript.
+func (c *UsageScriptClient) Query() *UsageScriptQuery {
+	return &UsageScriptQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeUsageScript},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a UsageScript entity by its id.
+func (c *UsageScriptClient) Get(ctx context.Context, id int64) (*UsageScript, error) {
+	return c.Query().Where(usagescript.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *UsageScriptClient) GetX(ctx context.Context, id int64) *UsageScript {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *UsageScriptClient) Hooks() []Hook {
+	hooks := c.hooks.UsageScript
+	return append(hooks[:len(hooks):len(hooks)], usagescript.Hooks[:]...)
+}
+
+// Interceptors returns the client interceptors.
+func (c *UsageScriptClient) Interceptors() []Interceptor {
+	inters := c.inters.UsageScript
+	return append(inters[:len(inters):len(inters)], usagescript.Interceptors[:]...)
+}
+
+func (c *UsageScriptClient) mutate(ctx context.Context, m *UsageScriptMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&UsageScriptCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&UsageScriptUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&UsageScriptUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&UsageScriptDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown UsageScript mutation op: %q", m.Op())
+	}
+}
+
 // UserClient is a client for the User schema.
 type UserClient struct {
 	config
@@ -4632,16 +4775,16 @@ type (
 		ErrorPassthroughRule, Group, IdempotencyRecord, PaymentAuditLog, PaymentOrder,
 		PaymentProviderInstance, PromoCode, PromoCodeUsage, Proxy, RedeemCode,
 		SecuritySecret, Setting, SubscriptionPlan, TLSFingerprintProfile,
-		UsageCleanupTask, UsageLog, User, UserAllowedGroup, UserAttributeDefinition,
-		UserAttributeValue, UserSubscription []ent.Hook
+		UsageCleanupTask, UsageLog, UsageScript, User, UserAllowedGroup,
+		UserAttributeDefinition, UserAttributeValue, UserSubscription []ent.Hook
 	}
 	inters struct {
 		APIKey, Account, AccountGroup, Announcement, AnnouncementRead,
 		ErrorPassthroughRule, Group, IdempotencyRecord, PaymentAuditLog, PaymentOrder,
 		PaymentProviderInstance, PromoCode, PromoCodeUsage, Proxy, RedeemCode,
 		SecuritySecret, Setting, SubscriptionPlan, TLSFingerprintProfile,
-		UsageCleanupTask, UsageLog, User, UserAllowedGroup, UserAttributeDefinition,
-		UserAttributeValue, UserSubscription []ent.Interceptor
+		UsageCleanupTask, UsageLog, UsageScript, User, UserAllowedGroup,
+		UserAttributeDefinition, UserAttributeValue, UserSubscription []ent.Interceptor
 	}
 )
 

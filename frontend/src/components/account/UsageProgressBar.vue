@@ -25,6 +25,18 @@
       </div>
     </div>
 
+    <!-- Script window stats row (used/limit from script) -->
+    <div
+      v-else-if="used != null && limit != null"
+      class="mb-0.5 flex items-center"
+    >
+      <div class="flex items-center gap-1.5 text-[9px] text-gray-500 dark:text-gray-400">
+        <span class="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800">
+          {{ formatScriptUsed }}/{{ formatScriptLimit }} {{ unit || '' }}
+        </span>
+      </div>
+    </div>
+
     <!-- Progress bar row -->
     <div class="flex items-center gap-1">
       <!-- Label badge (fixed width for alignment) -->
@@ -69,6 +81,9 @@ const props = defineProps<{
   color: 'indigo' | 'emerald' | 'purple' | 'amber'
   windowStats?: WindowStats | null
   showNowWhenIdle?: boolean
+  used?: number | null
+  limit?: number | null
+  unit?: string
 }>()
 
 const { t } = useI18n()
@@ -179,7 +194,7 @@ const formatRequests = computed(() => {
 })
 
 const formatTokens = computed(() => {
-  if (!props.windowStats) return ''
+  if (!props.windowStats || props.windowStats.tokens <= 0) return '-'
   return formatCompactNumber(props.windowStats.tokens)
 })
 
@@ -191,6 +206,17 @@ const formatAccountCost = computed(() => {
 const formatUserCost = computed(() => {
   if (!props.windowStats || props.windowStats.user_cost == null) return '0.00'
   return props.windowStats.user_cost.toFixed(2)
+})
+
+// Script window used/limit formatters
+const formatScriptUsed = computed(() => {
+  if (props.used == null) return '0'
+  return formatCompactNumber(props.used)
+})
+
+const formatScriptLimit = computed(() => {
+  if (props.limit == null) return '0'
+  return formatCompactNumber(props.limit)
 })
 
 </script>

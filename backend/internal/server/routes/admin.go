@@ -41,6 +41,9 @@ func RegisterAdminRoutes(
 		// Antigravity OAuth
 		registerAntigravityOAuthRoutes(admin, h)
 
+		// Copilot OAuth
+		registerCopilotOAuthRoutes(admin, h)
+
 		// 代理管理
 		registerProxyRoutes(admin, h)
 
@@ -79,6 +82,9 @@ func RegisterAdminRoutes(
 
 		// TLS 指纹模板管理
 		registerTLSFingerprintProfileRoutes(admin, h)
+
+		// 用量脚本管理
+		registerUsageScriptRoutes(admin, h)
 
 		// API Key 管理
 		registerAdminAPIKeyRoutes(admin, h)
@@ -337,6 +343,15 @@ func registerAntigravityOAuthRoutes(admin *gin.RouterGroup, h *handler.Handlers)
 	}
 }
 
+func registerCopilotOAuthRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	copilot := admin.Group("/copilot")
+	{
+		copilot.POST("/oauth/device-code", h.Admin.CopilotOAuth.InitiateDeviceCode)
+		copilot.POST("/oauth/poll-token", h.Admin.CopilotOAuth.PollToken)
+		copilot.GET("/default-model-mapping", h.Admin.CopilotOAuth.GetDefaultModelMapping)
+	}
+}
+
 func registerProxyRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	proxies := admin.Group("/proxies")
 	{
@@ -556,5 +571,15 @@ func registerChannelRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		channels.POST("", h.Admin.Channel.Create)
 		channels.PUT("/:id", h.Admin.Channel.Update)
 		channels.DELETE("/:id", h.Admin.Channel.Delete)
+	}
+}
+
+func registerUsageScriptRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	scripts := admin.Group("/usage-scripts")
+	{
+		scripts.GET("", h.Admin.UsageScript.List)
+		scripts.POST("", h.Admin.UsageScript.Create)
+		scripts.PUT("/:id", h.Admin.UsageScript.Update)
+		scripts.DELETE("/:id", h.Admin.UsageScript.Delete)
 	}
 }

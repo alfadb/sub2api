@@ -158,6 +158,19 @@ func RegisterGatewayRoutes(
 		antigravityV1Beta.POST("/models/*modelAction", h.Gateway.GeminiV1BetaModels)
 	}
 
+	// Copilot 专用路由（仅使用 copilot 账户）
+	copilotV1 := r.Group("/copilot/v1")
+	copilotV1.Use(bodyLimit)
+	copilotV1.Use(clientRequestID)
+	copilotV1.Use(opsErrorLogger)
+	copilotV1.Use(middleware.ForcePlatform(service.PlatformCopilot))
+	copilotV1.Use(gin.HandlerFunc(apiKeyAuth))
+	{
+		copilotV1.POST("/chat/completions", h.CopilotGateway.ChatCompletions)
+		copilotV1.POST("/responses", h.Responses.HandleResponses) // Stream ID 同步 + reasoning 支持
+		copilotV1.POST("/messages", h.CopilotGateway.Messages)
+		copilotV1.GET("/models", h.CopilotGateway.Models)
+	}
 }
 
 // getGroupPlatform extracts the group platform from the API Key stored in context.

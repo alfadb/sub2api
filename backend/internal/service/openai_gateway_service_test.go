@@ -55,9 +55,17 @@ func (r stubOpenAIAccountRepo) GetByID(ctx context.Context, id int64) (*Account,
 }
 
 func (r stubOpenAIAccountRepo) ListSchedulableByGroupIDAndPlatform(ctx context.Context, groupID int64, platform string) ([]Account, error) {
+	return r.ListSchedulableByGroupIDAndPlatforms(ctx, groupID, []string{platform})
+}
+
+func (r stubOpenAIAccountRepo) ListSchedulableByGroupIDAndPlatforms(ctx context.Context, groupID int64, platforms []string) ([]Account, error) {
+	platformSet := make(map[string]bool, len(platforms))
+	for _, p := range platforms {
+		platformSet[p] = true
+	}
 	var result []Account
 	for _, acc := range r.accounts {
-		if acc.Platform == platform {
+		if platformSet[acc.Platform] {
 			result = append(result, acc)
 		}
 	}
@@ -65,9 +73,17 @@ func (r stubOpenAIAccountRepo) ListSchedulableByGroupIDAndPlatform(ctx context.C
 }
 
 func (r stubOpenAIAccountRepo) ListSchedulableByPlatform(ctx context.Context, platform string) ([]Account, error) {
+	return r.ListSchedulableByPlatforms(ctx, []string{platform})
+}
+
+func (r stubOpenAIAccountRepo) ListSchedulableByPlatforms(ctx context.Context, platforms []string) ([]Account, error) {
+	platformSet := make(map[string]bool, len(platforms))
+	for _, p := range platforms {
+		platformSet[p] = true
+	}
 	var result []Account
 	for _, acc := range r.accounts {
-		if acc.Platform == platform {
+		if platformSet[acc.Platform] {
 			result = append(result, acc)
 		}
 	}
@@ -75,7 +91,11 @@ func (r stubOpenAIAccountRepo) ListSchedulableByPlatform(ctx context.Context, pl
 }
 
 func (r stubOpenAIAccountRepo) ListSchedulableUngroupedByPlatform(ctx context.Context, platform string) ([]Account, error) {
-	return r.ListSchedulableByPlatform(ctx, platform)
+	return r.ListSchedulableByPlatforms(ctx, []string{platform})
+}
+
+func (r stubOpenAIAccountRepo) ListSchedulableUngroupedByPlatforms(ctx context.Context, platforms []string) ([]Account, error) {
+	return r.ListSchedulableByPlatforms(ctx, platforms)
 }
 
 type stubConcurrencyCache struct {

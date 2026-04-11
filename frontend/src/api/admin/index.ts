@@ -27,6 +27,7 @@ import backupAPI from './backup'
 import tlsFingerprintProfileAPI from './tlsFingerprintProfile'
 import channelsAPI from './channels'
 import adminPaymentAPI from './payment'
+import copilotAPI from './copilot'
 
 /**
  * Unified admin API object for convenient access
@@ -46,6 +47,7 @@ export const adminAPI = {
   usage: usageAPI,
   gemini: geminiAPI,
   antigravity: antigravityAPI,
+  copilot: copilotAPI,
   userAttributes: userAttributesAPI,
   ops: opsAPI,
   errorPassthrough: errorPassthroughAPI,
@@ -73,6 +75,7 @@ export {
   usageAPI,
   geminiAPI,
   antigravityAPI,
+  copilotAPI,
   userAttributesAPI,
   opsAPI,
   errorPassthroughAPI,

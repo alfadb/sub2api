@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -222,6 +223,13 @@ type UsageInfo struct {
 
 	// 获取 usage 时的错误信息（降级返回，而非 500）
 	Error string `json:"error,omitempty"`
+
+	// Copilot 本地用量统计（基于 usage_logs，无公开 API）
+	CopilotDaily   *UsageProgress `json:"copilot_daily,omitempty"`
+	CopilotMonthly *UsageProgress `json:"copilot_monthly,omitempty"`
+
+	// 脚本引擎采集的通用用量窗口
+	ScriptWindows []ScriptUsageWindow `json:"script_windows,omitempty"`
 }
 
 // ClaudeUsageResponse Anthropic API返回的usage结构
@@ -256,16 +264,60 @@ type ClaudeUsageFetcher interface {
 	FetchUsageWithOptions(ctx context.Context, opts *ClaudeUsageFetchOptions) (*ClaudeUsageResponse, error)
 }
 
+// CopilotQuotaDetail GitHub Copilot 单个配额详情
+// 注意：GitHub API 返回的数字字段可能是浮点数（如 0.0），所以使用 float64
+type CopilotQuotaDetail struct {
+	Entitlement      float64 `json:"entitlement"`
+	OverageCount     float64 `json:"overage_count"`
+	OveragePermitted bool    `json:"overage_permitted"`
+	PercentRemaining float64 `json:"percent_remaining"`
+	QuotaID          string  `json:"quota_id"`
+	QuotaRemaining   float64 `json:"quota_remaining"`
+	Remaining        float64 `json:"remaining"`
+	Unlimited        bool    `json:"unlimited"`
+}
+
+// CopilotQuotaSnapshots GitHub Copilot 配额快照
+type CopilotQuotaSnapshots struct {
+	Chat                CopilotQuotaDetail `json:"chat"`
+	Completions         CopilotQuotaDetail `json:"completions"`
+	PremiumInteractions CopilotQuotaDetail `json:"premium_interactions"`
+}
+
+// CopilotUsageResponse GitHub Copilot Usage API 响应
+type CopilotUsageResponse struct {
+	AccessTypeSKU         string                `json:"access_type_sku"`
+	AnalyticsTrackingID   string                `json:"analytics_tracking_id"`
+	AssignedDate          string                `json:"assigned_date"`
+	CanSignupForLimited   bool                  `json:"can_signup_for_limited"`
+	ChatEnabled           bool                  `json:"chat_enabled"`
+	CopilotPlan           string                `json:"copilot_plan"`
+	OrganizationLoginList []any                 `json:"organization_login_list"`
+	OrganizationList      []any                 `json:"organization_list"`
+	QuotaResetDate        string                `json:"quota_reset_date"`
+	QuotaResetDateUTC     string                `json:"quota_reset_date_utc"`
+	QuotaSnapshots        CopilotQuotaSnapshots `json:"quota_snapshots"`
+}
+
+// CopilotUsageFetcher fetches usage data from GitHub Copilot API
+type CopilotUsageFetcher interface {
+	FetchUsage(ctx context.Context, accessToken, proxyURL string, accountID int64) (*CopilotUsageResponse, error)
+}
+
 // AccountUsageService 账号使用量查询服务
 type AccountUsageService struct {
 	accountRepo             AccountRepository
 	usageLogRepo            UsageLogRepository
 	usageFetcher            ClaudeUsageFetcher
+	copilotUsageFetcher     CopilotUsageFetcher
 	geminiQuotaService      *GeminiQuotaService
 	antigravityQuotaFetcher *AntigravityQuotaFetcher
 	cache                   *UsageCache
 	identityCache           IdentityCache
 	tlsFPProfileService     *TLSFingerprintProfileService
+	scriptEngine            *ScriptEngine
+	usageScriptRepo         UsageScriptRepository
+	tempUnschedCache        TempUnschedCache
 }
 
 // NewAccountUsageService 创建AccountUsageService实例
@@ -273,21 +325,29 @@ func NewAccountUsageService(
 	accountRepo AccountRepository,
 	usageLogRepo UsageLogRepository,
 	usageFetcher ClaudeUsageFetcher,
+	copilotUsageFetcher CopilotUsageFetcher,
 	geminiQuotaService *GeminiQuotaService,
 	antigravityQuotaFetcher *AntigravityQuotaFetcher,
 	cache *UsageCache,
 	identityCache IdentityCache,
 	tlsFPProfileService *TLSFingerprintProfileService,
+	scriptEngine *ScriptEngine,
+	usageScriptRepo UsageScriptRepository,
+	tempUnschedCache TempUnschedCache,
 ) *AccountUsageService {
 	return &AccountUsageService{
 		accountRepo:             accountRepo,
 		usageLogRepo:            usageLogRepo,
 		usageFetcher:            usageFetcher,
+		copilotUsageFetcher:     copilotUsageFetcher,
 		geminiQuotaService:      geminiQuotaService,
 		antigravityQuotaFetcher: antigravityQuotaFetcher,
 		cache:                   cache,
 		identityCache:           identityCache,
 		tlsFPProfileService:     tlsFPProfileService,
+		scriptEngine:            scriptEngine,
+		usageScriptRepo:         usageScriptRepo,
+		tempUnschedCache:        tempUnschedCache,
 	}
 }
 
@@ -315,6 +375,26 @@ func (s *AccountUsageService) GetUsage(ctx context.Context, accountID int64) (*U
 			s.tryClearRecoverableAccountError(ctx, account)
 		}
 		return usage, err
+	}
+
+	// Copilot 平台：基于本地 usage_logs 计算用量（GitHub Copilot 没有公开的 usage API）
+	if account.Platform == PlatformCopilot {
+		usage, err := s.getCopilotUsage(ctx, account)
+		if err == nil {
+			s.tryClearRecoverableAccountError(ctx, account)
+		}
+		return usage, err
+	}
+
+	// 非官方上游（中转站）：通过 Starlark 脚本采集用量
+	if baseURL := account.GetBaseURL(); baseURL != "" {
+		if usage, err := s.getScriptUsage(ctx, account, baseURL); usage != nil || err != nil {
+			return usage, err
+		}
+		// 无匹配脚本：自定义 base_url 的账号不走平台原生逻辑，返回空用量
+		if account.GetCredential("base_url") != "" {
+			return &UsageInfo{}, nil
+		}
 	}
 
 	// Antigravity 平台：使用 AntigravityQuotaFetcher 获取额度
@@ -1354,4 +1434,345 @@ func buildGeminiUsageProgress(used, limit int64, resetAt time.Time, tokens int64
 // 用于账号列表页面显示当前窗口费用
 func (s *AccountUsageService) GetAccountWindowStats(ctx context.Context, accountID int64, startTime time.Time) (*usagestats.AccountStats, error) {
 	return s.usageLogRepo.GetAccountWindowStats(ctx, accountID, startTime)
+}
+
+// getCopilotUsage 获取 Copilot 账户用量统计
+// 优先使用 GitHub Copilot Usage API，失败时回退到本地 usage_logs 表计算
+func (s *AccountUsageService) getCopilotUsage(ctx context.Context, account *Account) (*UsageInfo, error) {
+	now := time.Now()
+	usage := &UsageInfo{
+		UpdatedAt: &now,
+	}
+
+	// 获取 access_token
+	tokenProvider := NewCopilotTokenProvider()
+	accessToken, err := tokenProvider.GetAccessToken(ctx, account)
+	if err != nil {
+		log.Printf("Failed to get copilot access token for account %d: %v", account.ID, err)
+		return s.getCopilotLocalUsage(ctx, account, now)
+	}
+
+	// 获取代理 URL
+	var proxyURL string
+	if account.ProxyID != nil && account.Proxy != nil {
+		proxyURL = account.Proxy.URL()
+	}
+
+	// 调用 Copilot Usage API
+	if s.copilotUsageFetcher != nil {
+		apiResp, err := s.copilotUsageFetcher.FetchUsage(ctx, accessToken, proxyURL, account.ID)
+		if err != nil {
+			log.Printf("Failed to fetch copilot usage API for account %d: %v", account.ID, err)
+			return s.getCopilotLocalUsage(ctx, account, now)
+		}
+
+		// 优先使用 premium_interactions 配额（Copilot 的主要计费指标）
+
+		// 解析 quota_reset_date（优先使用 UTC 格式，回退到日期格式）
+		var resetAt time.Time
+		var parseErr error
+		if apiResp.QuotaResetDateUTC != "" {
+			resetAt, parseErr = time.Parse(time.RFC3339Nano, apiResp.QuotaResetDateUTC)
+		}
+		if parseErr != nil || apiResp.QuotaResetDateUTC == "" {
+			if apiResp.QuotaResetDate != "" {
+				resetAt, parseErr = time.Parse("2006-01-02", apiResp.QuotaResetDate)
+				// 如果解析成功，设置时间为当天的 23:59:59 UTC（月末最后一天）
+				if parseErr == nil {
+					resetAt = time.Date(resetAt.Year(), resetAt.Month(), resetAt.Day(), 23, 59, 59, 0, time.UTC)
+				}
+			}
+		}
+
+		if parseErr != nil {
+			log.Printf("[ERROR] Failed to parse quota_reset_date='%s', quota_reset_date_utc='%s': %v",
+				apiResp.QuotaResetDate, apiResp.QuotaResetDateUTC, parseErr)
+			// 解析失败，回退到本地统计
+			return s.addCopilotLocalUsage(ctx, account, now, usage)
+		}
+
+		if !resetAt.IsZero() {
+			// 优先使用 premium_interactions 配额（Copilot 的主要计费指标）
+			// 如果 premium_interactions 没有数据，则回退到 chat 配额
+			effectiveQuota := apiResp.QuotaSnapshots.PremiumInteractions
+			if effectiveQuota.Entitlement == 0 && effectiveQuota.QuotaRemaining == 0 {
+				effectiveQuota = apiResp.QuotaSnapshots.Chat
+			}
+
+			// 计算 utilization：优先使用 PercentRemaining，如果没有则用 Entitlement 计算
+			utilization := 100.0 - effectiveQuota.PercentRemaining
+			if effectiveQuota.Unlimited {
+				utilization = 0
+			} else if effectiveQuota.Entitlement == 0 && effectiveQuota.PercentRemaining == 100 {
+				// Entitlement=0 且 PercentRemaining=100，说明 API 未返回有效配额数据
+				// 保持 utilization=0（默认值），前端会显示为无配额信息
+				utilization = 0
+			}
+
+			usedReqs := int64(0)
+			if effectiveQuota.Entitlement > 0 {
+				usedReqs = int64(effectiveQuota.Entitlement - effectiveQuota.QuotaRemaining)
+			}
+
+			// Copilot API 返回的是月度配额，应该放入 CopilotMonthly
+			usage.CopilotMonthly = &UsageProgress{
+				Utilization:      utilization,
+				ResetsAt:         &resetAt,
+				RemainingSeconds: int(time.Until(resetAt).Seconds()),
+				UsedRequests:     usedReqs,
+				LimitRequests:    int64(effectiveQuota.Entitlement),
+			}
+
+			// 超限暂停：utilization >= 100% 时暂停调度到 quota_reset_date
+			// 必须同时更新数据库和 Redis 缓存，因为调度器只检查数据库字段
+			if utilization >= 100 && !effectiveQuota.Unlimited {
+				reason := fmt.Sprintf("copilot_quota_exhausted: %d/%.0f requests", usedReqs, effectiveQuota.Entitlement)
+				// 先更新数据库（调度器依赖数据库字段判断是否可调度）
+				if err := s.accountRepo.SetTempUnschedulable(ctx, account.ID, resetAt, reason); err != nil {
+					slog.Warn("copilot_quota_set_temp_unsched_db_failed", "account_id", account.ID, "error", err)
+				} else {
+					slog.Info("copilot_quota_exhausted_account_paused",
+						"account_id", account.ID,
+						"utilization", utilization,
+						"reset_at", resetAt,
+						"used_requests", usedReqs,
+						"entitlement", effectiveQuota.Entitlement,
+					)
+				}
+				// 再更新 Redis 缓存（用于前端显示详情）
+				if s.tempUnschedCache != nil {
+					_ = s.tempUnschedCache.SetTempUnsched(ctx, int64(account.ID), &TempUnschedState{
+						UntilUnix:       resetAt.Unix(),
+						TriggeredAtUnix: now.Unix(),
+						StatusCode:      429,
+						MatchedKeyword:  "copilot_quota_exhausted",
+						ErrorMessage:    fmt.Sprintf("Copilot monthly quota exhausted: %d/%.0f", usedReqs, effectiveQuota.Entitlement),
+					})
+				}
+			} else if utilization < 100 {
+				// 配额恢复/重置后自动清除暂停状态
+				// 清除数据库（调度器依赖数据库字段）
+				if err := s.accountRepo.ClearTempUnschedulable(ctx, account.ID); err != nil {
+					slog.Warn("copilot_quota_clear_temp_unsched_db_failed", "account_id", account.ID, "error", err)
+				}
+				// 清除 Redis 缓存
+				if s.tempUnschedCache != nil {
+					_ = s.tempUnschedCache.DeleteTempUnsched(ctx, int64(account.ID))
+				}
+			}
+		} else {
+			log.Printf("[ERROR] Failed to parse quota_reset_date for account %d: %v", account.ID, parseErr)
+		}
+	} else {
+		log.Printf("[WARN] copilotUsageFetcher is nil for account %d", account.ID)
+	}
+
+	// 添加本地统计（即使 API 成功也获取本地数据）
+	return s.addCopilotLocalUsage(ctx, account, now, usage)
+}
+
+// getCopilotLocalUsage 回退到本地 usage_logs 表计算
+func (s *AccountUsageService) getCopilotLocalUsage(ctx context.Context, account *Account, now time.Time) (*UsageInfo, error) {
+	usage := &UsageInfo{
+		UpdatedAt: &now,
+	}
+	return s.addCopilotLocalUsage(ctx, account, now, usage)
+}
+
+// addCopilotLocalUsage 添加本地统计信息到 UsageInfo
+func (s *AccountUsageService) addCopilotLocalUsage(ctx context.Context, account *Account, now time.Time, usage *UsageInfo) (*UsageInfo, error) {
+	if s.usageLogRepo == nil {
+		return usage, nil
+	}
+
+	// 计算时间窗口（使用 UTC 时间）
+	// Copilot 只有月度配额，没有每日配额，不设置 CopilotDaily
+	// 本地每日统计暂不展示（后续可考虑在详情页展示）
+	monthStart := copilotMonthlyWindowStart(now)
+
+	// 获取本月统计（仅在 API 未设置 CopilotMonthly 时才使用本地统计）
+	if usage.CopilotMonthly == nil {
+		monthStats, err := s.usageLogRepo.GetAccountStatsAggregated(ctx, account.ID, monthStart, now)
+		if err != nil {
+			log.Printf("Failed to get copilot month stats for account %d: %v", account.ID, err)
+		} else if monthStats != nil {
+			monthResetAt := copilotMonthlyResetTime(now)
+			accountCost := 0.0
+			if monthStats.TotalAccountCost != nil {
+				accountCost = *monthStats.TotalAccountCost
+			}
+			usage.CopilotMonthly = &UsageProgress{
+				WindowStats: &WindowStats{
+					Requests:     monthStats.TotalRequests,
+					Tokens:       monthStats.TotalTokens,
+					Cost:         accountCost,
+					StandardCost: monthStats.TotalCost,
+					UserCost:     monthStats.TotalActualCost,
+				},
+				ResetsAt:         &monthResetAt,
+				RemainingSeconds: int(time.Until(monthResetAt).Seconds()),
+			}
+		}
+	} else if usage.CopilotMonthly.WindowStats == nil {
+		// API 已设置 CopilotMonthly（有配额数据），补充本地 WindowStats（token/cost 统计）
+		monthStats, err := s.usageLogRepo.GetAccountStatsAggregated(ctx, account.ID, monthStart, now)
+		if err != nil {
+			log.Printf("Failed to get copilot month window stats for account %d: %v", account.ID, err)
+		} else if monthStats != nil {
+			accountCost := 0.0
+			if monthStats.TotalAccountCost != nil {
+				accountCost = *monthStats.TotalAccountCost
+			}
+			usage.CopilotMonthly.WindowStats = &WindowStats{
+				Requests:     usage.CopilotMonthly.UsedRequests, // 用 API 的请求数（更准确）
+				Tokens:       monthStats.TotalTokens,
+				Cost:         accountCost,
+				StandardCost: monthStats.TotalCost,
+				UserCost:     monthStats.TotalActualCost,
+			}
+		}
+	}
+
+	return usage, nil
+}
+
+// copilotMonthlyWindowStart 返回 Copilot 每月窗口的开始时间（UTC 每月1日 00:00:00）
+func copilotMonthlyWindowStart(now time.Time) time.Time {
+	return time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+}
+
+// copilotMonthlyResetTime 返回 Copilot 每月重置时间（下个月1日 00:00:00 UTC）
+func copilotMonthlyResetTime(now time.Time) time.Time {
+	year := now.Year()
+	month := now.Month() + 1
+	if month > 12 {
+		month = 1
+		year++
+	}
+	return time.Date(year, month, 1, 0, 0, 0, 0, time.UTC)
+}
+
+// UsageScriptRepository 用量脚本仓储接口
+type UsageScriptRepository interface {
+	FindByHostAndType(ctx context.Context, baseURLHost string, accountType string) (*UsageScript, error)
+	List(ctx context.Context) ([]*UsageScript, error)
+	Create(ctx context.Context, script *UsageScript) (*UsageScript, error)
+	Update(ctx context.Context, id int64, script *UsageScript) (*UsageScript, error)
+	Delete(ctx context.Context, id int64) error
+}
+
+// extractBaseURLHost 从 base_url 提取域名级标识（scheme://host）
+func extractBaseURLHost(baseURL string) string {
+	u, err := url.Parse(baseURL)
+	if err != nil || u.Host == "" {
+		return baseURL
+	}
+	return u.Scheme + "://" + u.Host
+}
+
+// getScriptUsage 尝试通过脚本引擎获取非官方上游的用量
+// 返回 (nil, nil) 表示无匹配脚本，调用方应继续走平台原生逻辑
+func (s *AccountUsageService) getScriptUsage(ctx context.Context, account *Account, baseURL string) (*UsageInfo, error) {
+	if s.usageScriptRepo == nil || s.scriptEngine == nil {
+		return nil, nil
+	}
+
+	host := extractBaseURLHost(baseURL)
+	script, err := s.usageScriptRepo.FindByHostAndType(ctx, host, account.Type)
+	if err != nil {
+		slog.Warn("usage_script_lookup_failed", "account_id", account.ID, "host", host, "error", err)
+		return nil, nil // 查找失败不阻塞，降级到平台原生逻辑
+	}
+	if script == nil {
+		return nil, nil // 无匹配脚本
+	}
+
+	// 使用 singleflight 防止并发执行同一账号的脚本
+	cacheKey := fmt.Sprintf("script:%d", account.ID)
+	result, flightErr, _ := s.cache.apiFlight.Do(cacheKey, func() (any, error) {
+		return s.scriptEngine.Execute(ctx, script.Script, account)
+	})
+	if flightErr != nil {
+		slog.Warn("usage_script_exec_failed", "account_id", account.ID, "host", host, "error", flightErr)
+		return nil, nil // 执行失败不阻塞
+	}
+
+	scriptResult, ok := result.(*ScriptUsageResult)
+	if !ok || scriptResult == nil {
+		return nil, nil
+	}
+
+	if scriptResult.Error != "" {
+		slog.Warn("usage_script_returned_error", "account_id", account.ID, "host", host, "error", scriptResult.Error)
+	}
+
+	now := time.Now()
+	return &UsageInfo{
+		UpdatedAt:     &now,
+		ScriptWindows: scriptResult.Windows,
+	}, nil
+}
+
+// ScriptCheckResult 脚本用量检查结果
+type ScriptCheckResult int
+
+const (
+	ScriptCheckNoop      ScriptCheckResult = iota // 无变化
+	ScriptCheckPaused                             // 撞墙，已暂停
+	ScriptCheckRecovered                          // 窗口恢复，已解除暂停
+)
+
+// CheckScriptUsageForScheduling 检查脚本用量并在超限时标记账号为临时不可调度
+// 如果账号当前因 usage_script 被暂停但用量已恢复，主动清除暂停状态
+func (s *AccountUsageService) CheckScriptUsageForScheduling(ctx context.Context, account *Account) ScriptCheckResult {
+	baseURL := account.GetBaseURL()
+	if baseURL == "" {
+		return ScriptCheckNoop
+	}
+	if s.usageScriptRepo == nil || s.scriptEngine == nil {
+		return ScriptCheckNoop
+	}
+
+	host := extractBaseURLHost(baseURL)
+	script, err := s.usageScriptRepo.FindByHostAndType(ctx, host, account.Type)
+	if err != nil || script == nil {
+		return ScriptCheckNoop
+	}
+
+	result, err := s.scriptEngine.Execute(ctx, script.Script, account)
+	if err != nil || result == nil || result.Error != "" {
+		return ScriptCheckNoop
+	}
+
+	for _, w := range result.Windows {
+		if w.Utilization >= 1.0 {
+			var until time.Time
+			if w.ResetsAt != nil {
+				until = time.Unix(*w.ResetsAt, 0)
+			} else {
+				until = time.Now().Add(5 * time.Minute) // 无重置时间则默认 5 分钟
+			}
+			reason := fmt.Sprintf("usage_script: %s/%s %.0f%%", host, w.Name, w.Utilization*100)
+			if setErr := s.accountRepo.SetTempUnschedulable(ctx, account.ID, until, reason); setErr != nil {
+				slog.Warn("script_usage_set_temp_unsched_failed", "account_id", account.ID, "error", setErr)
+			}
+			return ScriptCheckPaused
+		}
+	}
+
+	// 所有窗口 utilization < 1.0：如果账号当前因 usage_script 被暂停，主动恢复
+	if account.TempUnschedulableReason != "" &&
+		strings.HasPrefix(account.TempUnschedulableReason, "usage_script:") {
+		if clearErr := s.accountRepo.ClearTempUnschedulable(ctx, account.ID); clearErr != nil {
+			slog.Warn("script_usage_clear_temp_unsched_failed", "account_id", account.ID, "error", clearErr)
+		} else {
+			slog.Info("script_usage_check.recovered",
+				"account_id", account.ID,
+				"previous_reason", account.TempUnschedulableReason,
+			)
+		}
+		return ScriptCheckRecovered
+	}
+
+	return ScriptCheckNoop
 }

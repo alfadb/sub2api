@@ -59,6 +59,8 @@ type AccountTestService struct {
 	accountRepo               AccountRepository
 	geminiTokenProvider       *GeminiTokenProvider
 	antigravityGatewayService *AntigravityGatewayService
+	copilotTokenProvider      *CopilotTokenProvider
+	versionService            *OpenCodeVersionService
 	httpUpstream              HTTPUpstream
 	cfg                       *config.Config
 	tlsFPProfileService       *TLSFingerprintProfileService
@@ -69,6 +71,8 @@ func NewAccountTestService(
 	accountRepo AccountRepository,
 	geminiTokenProvider *GeminiTokenProvider,
 	antigravityGatewayService *AntigravityGatewayService,
+	copilotTokenProvider *CopilotTokenProvider,
+	versionService *OpenCodeVersionService,
 	httpUpstream HTTPUpstream,
 	cfg *config.Config,
 	tlsFPProfileService *TLSFingerprintProfileService,
@@ -77,6 +81,8 @@ func NewAccountTestService(
 		accountRepo:               accountRepo,
 		geminiTokenProvider:       geminiTokenProvider,
 		antigravityGatewayService: antigravityGatewayService,
+		copilotTokenProvider:      copilotTokenProvider,
+		versionService:            versionService,
 		httpUpstream:              httpUpstream,
 		cfg:                       cfg,
 		tlsFPProfileService:       tlsFPProfileService,
@@ -179,6 +185,10 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 
 	if account.Platform == PlatformAntigravity {
 		return s.routeAntigravityTest(c, account, modelID, prompt)
+	}
+
+	if account.Platform == PlatformCopilot {
+		return s.testCopilotAccountConnection(c, account, modelID)
 	}
 
 	return s.testClaudeAccountConnection(c, account, modelID)
@@ -1111,4 +1121,181 @@ func parseTestSSEOutput(body string) (responseText, errMsg string) {
 	}
 	responseText = strings.Join(texts, "")
 	return
+}
+
+// shouldUseCopilotResponsesAPI mirrors opencode's logic: GPT-5+ (excluding gpt-5-mini) uses /responses.
+func shouldUseCopilotResponsesAPI(modelID string) bool {
+	if !strings.HasPrefix(modelID, "gpt-") {
+		return false
+	}
+	// Extract major version number after "gpt-"
+	rest := modelID[4:]
+	i := 0
+	for i < len(rest) && rest[i] >= '0' && rest[i] <= '9' {
+		i++
+	}
+	if i == 0 {
+		return false
+	}
+	major := 0
+	for _, ch := range rest[:i] {
+		major = major*10 + int(ch-'0')
+	}
+	if major < 5 {
+		return false
+	}
+	return !strings.HasPrefix(modelID, "gpt-5-mini")
+}
+
+// testCopilotAccountConnection tests a GitHub Copilot account's connection.
+// Routes to /chat/completions or /responses based on model, with exact opencode headers.
+func (s *AccountTestService) testCopilotAccountConnection(c *gin.Context, account *Account, modelID string) error {
+	ctx := c.Request.Context()
+
+	testModelID := modelID
+	if testModelID == "" {
+		testModelID = "claude-sonnet-4-5"
+	}
+
+	// Get access token
+	token, err := s.copilotTokenProvider.GetAccessToken(ctx, account)
+	if err != nil {
+		return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to get access token: %s", err.Error()))
+	}
+
+	// Set SSE headers
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
+	c.Writer.Flush()
+
+	// Determine API path and build payload
+	var apiURL string
+	var payloadBytes []byte
+
+	if shouldUseCopilotResponsesAPI(testModelID) {
+		// Responses API for GPT-5+
+		apiURL = copilotUpstreamResponsesURL
+		payload := map[string]any{
+			"model":  testModelID,
+			"stream": true,
+			"input": []map[string]any{
+				{
+					"role":    "user",
+					"content": "hi",
+				},
+			},
+			"max_output_tokens": 1024,
+			"temperature":       1,
+		}
+		payloadBytes, _ = json.Marshal(payload)
+	} else {
+		// Chat Completions API for all other models
+		apiURL = copilotUpstreamURL
+		payload := map[string]any{
+			"model":  testModelID,
+			"stream": true,
+			"messages": []map[string]any{
+				{
+					"role":    "user",
+					"content": "hi",
+				},
+			},
+			"max_tokens":  1024,
+			"temperature": 1,
+		}
+		payloadBytes, _ = json.Marshal(payload)
+	}
+
+	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(payloadBytes))
+	if err != nil {
+		return s.sendErrorAndEnd(c, "Failed to create request")
+	}
+
+	// Exact opencode headers — nothing more, nothing less.
+	// All headers built from scratch, zero passthrough.
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", s.versionService.UserAgent())
+	req.Header.Set("Openai-Intent", "conversation-edits")
+	req.Header.Set("x-initiator", "user")
+
+	proxyURL := ""
+	if account.ProxyID != nil && account.Proxy != nil {
+		proxyURL = account.Proxy.URL()
+	}
+
+	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
+	if err != nil {
+		return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
+	}
+
+	// Route to appropriate stream processor
+	if shouldUseCopilotResponsesAPI(testModelID) {
+		return s.processOpenAIStream(c, resp.Body)
+	}
+	return s.processCopilotChatStream(c, resp.Body)
+}
+
+// processCopilotChatStream processes SSE from Copilot /chat/completions (OpenAI Chat format).
+// Extracts text from choices[0].delta.content.
+func (s *AccountTestService) processCopilotChatStream(c *gin.Context, body io.Reader) error {
+	reader := bufio.NewReader(body)
+	receivedDone := false
+
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				if receivedDone {
+					s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+					return nil
+				}
+				return s.sendErrorAndEnd(c, "Stream ended unexpectedly without [DONE]")
+			}
+			return s.sendErrorAndEnd(c, fmt.Sprintf("Stream read error: %s", err.Error()))
+		}
+
+		line = strings.TrimSpace(line)
+		if line == "" || !sseDataPrefix.MatchString(line) {
+			continue
+		}
+
+		jsonStr := sseDataPrefix.ReplaceAllString(line, "")
+		if jsonStr == "[DONE]" {
+			s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+			return nil
+		}
+
+		var data map[string]any
+		if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
+			continue
+		}
+
+		// Extract content from choices[0].delta.content
+		choices, ok := data["choices"].([]any)
+		if !ok || len(choices) == 0 {
+			continue
+		}
+		choice, ok := choices[0].(map[string]any)
+		if !ok {
+			continue
+		}
+		delta, ok := choice["delta"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if content, ok := delta["content"].(string); ok && content != "" {
+			s.sendEvent(c, TestEvent{Type: "content", Text: content})
+		}
+	}
 }

@@ -39,6 +39,7 @@ type GatewayHandler struct {
 	gatewayService            *service.GatewayService
 	geminiCompatService       *service.GeminiMessagesCompatService
 	antigravityGatewayService *service.AntigravityGatewayService
+	copilotGatewayService     *service.CopilotGatewayService
 	userService               *service.UserService
 	billingCacheService       *service.BillingCacheService
 	usageService              *service.UsageService
@@ -58,6 +59,7 @@ func NewGatewayHandler(
 	gatewayService *service.GatewayService,
 	geminiCompatService *service.GeminiMessagesCompatService,
 	antigravityGatewayService *service.AntigravityGatewayService,
+	copilotGatewayService *service.CopilotGatewayService,
 	userService *service.UserService,
 	concurrencyService *service.ConcurrencyService,
 	billingCacheService *service.BillingCacheService,
@@ -92,6 +94,7 @@ func NewGatewayHandler(
 		gatewayService:            gatewayService,
 		geminiCompatService:       geminiCompatService,
 		antigravityGatewayService: antigravityGatewayService,
+		copilotGatewayService:     copilotGatewayService,
 		userService:               userService,
 		billingCacheService:       billingCacheService,
 		usageService:              usageService,
@@ -679,9 +682,20 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			}
 			// 记录 Forward 前已写入字节数，Forward 后若增加则说明 SSE 内容已发，禁止 failover
 			writerSizeBeforeForward := c.Writer.Size()
-			if account.Platform == service.PlatformAntigravity && account.Type != service.AccountTypeAPIKey {
-				result, err = h.antigravityGatewayService.Forward(requestCtx, c, account, body, hasBoundSession)
-			} else {
+			switch account.Platform {
+			case service.PlatformAntigravity:
+				if account.Type != service.AccountTypeAPIKey {
+					result, err = h.antigravityGatewayService.Forward(requestCtx, c, account, body, hasBoundSession)
+				} else {
+					result, err = h.gatewayService.Forward(requestCtx, c, account, parsedReq)
+				}
+			case service.PlatformCopilot:
+				if isClaudeModel(reqModel) {
+					result, err = h.copilotGatewayService.ForwardMessages(requestCtx, c, account, body)
+				} else {
+					result, err = h.copilotGatewayService.ForwardChatAsAnthropic(requestCtx, c, account, body)
+				}
+			default:
 				result, err = h.gatewayService.Forward(requestCtx, c, account, parsedReq)
 			}
 
@@ -1223,39 +1237,17 @@ func (h *GatewayHandler) handleConcurrencyError(c *gin.Context, err error, slotT
 }
 
 func (h *GatewayHandler) handleFailoverExhausted(c *gin.Context, failoverErr *service.UpstreamFailoverError, platform string, streamStarted bool) {
-	statusCode := failoverErr.StatusCode
-	responseBody := failoverErr.ResponseBody
-
-	// 先检查透传规则
-	if h.errorPassthroughService != nil && len(responseBody) > 0 {
-		if rule := h.errorPassthroughService.MatchRule(platform, statusCode, responseBody); rule != nil {
-			// 确定响应状态码
-			respCode := statusCode
-			if !rule.PassthroughCode && rule.ResponseCode != nil {
-				respCode = *rule.ResponseCode
-			}
-
-			// 确定响应消息
-			msg := service.ExtractUpstreamErrorMessage(responseBody)
-			if !rule.PassthroughBody && rule.CustomMessage != nil {
-				msg = *rule.CustomMessage
-			}
-
-			if rule.SkipMonitoring {
-				c.Set(service.OpsSkipPassthroughKey, true)
-			}
-
-			h.handleStreamingAwareError(c, respCode, "upstream_error", msg, streamStarted)
-			return
-		}
+	if status, errType, errMsg, matched := applyFailoverPassthroughRule(c, h.errorPassthroughService, platform, failoverErr); matched {
+		h.handleStreamingAwareError(c, status, errType, errMsg, streamStarted)
+		return
 	}
 
 	// 记录原始上游状态码，以便 ops 错误日志捕获真实的上游错误
-	upstreamMsg := service.ExtractUpstreamErrorMessage(responseBody)
-	service.SetOpsUpstreamError(c, statusCode, upstreamMsg, "")
+	upstreamMsg := service.ExtractUpstreamErrorMessage(failoverErr.ResponseBody)
+	service.SetOpsUpstreamError(c, failoverErr.StatusCode, upstreamMsg, "")
 
 	// 使用默认的错误映射
-	status, errType, errMsg := h.mapUpstreamError(statusCode)
+	status, errType, errMsg := h.mapUpstreamError(failoverErr.StatusCode)
 	h.handleStreamingAwareError(c, status, errType, errMsg, streamStarted)
 }
 

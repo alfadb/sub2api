@@ -483,12 +483,20 @@ func (a *Account) resolveModelMapping(rawMapping map[string]any) map[string]stri
 			return domain.DefaultAntigravityModelMapping
 		}
 		// Bedrock 默认映射由 forwardBedrock 统一处理（需配合 region prefix 调整）
+		// Copilot 平台使用默认映射
+		if a.Platform == domain.PlatformCopilot {
+			return domain.DefaultCopilotModelMapping
+		}
 		return nil
 	}
 	if len(rawMapping) == 0 {
 		// Antigravity 平台使用默认映射
 		if a.Platform == domain.PlatformAntigravity {
 			return domain.DefaultAntigravityModelMapping
+		}
+		// Copilot 平台使用默认映射
+		if a.Platform == domain.PlatformCopilot {
+			return domain.DefaultCopilotModelMapping
 		}
 		return nil
 	}
@@ -513,6 +521,10 @@ func (a *Account) resolveModelMapping(rawMapping map[string]any) map[string]stri
 	// Antigravity 平台使用默认映射
 	if a.Platform == domain.PlatformAntigravity {
 		return domain.DefaultAntigravityModelMapping
+	}
+	// Copilot 平台使用默认映射
+	if a.Platform == domain.PlatformCopilot {
+		return domain.DefaultCopilotModelMapping
 	}
 	return nil
 }
@@ -1087,10 +1099,10 @@ func (a *Account) IsOpenAITokenExpired() bool {
 	return time.Now().Add(60 * time.Second).After(*expiresAt)
 }
 
-// IsMixedSchedulingEnabled 检查 antigravity 账户是否启用混合调度
-// 启用后可参与 anthropic/gemini 分组的账户调度
+// IsMixedSchedulingEnabled 检查跨平台账户是否启用混合调度
+// 启用后可参与 anthropic/gemini 分组的账户调度（支持 antigravity 和 copilot 平台）
 func (a *Account) IsMixedSchedulingEnabled() bool {
-	if a.Platform != PlatformAntigravity {
+	if a.Platform != PlatformAntigravity && a.Platform != PlatformCopilot {
 		return false
 	}
 	if a.Extra == nil {

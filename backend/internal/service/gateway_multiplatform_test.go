@@ -1834,6 +1834,21 @@ func TestAccount_IsMixedSchedulingEnabled(t *testing.T) {
 			account:  Account{Platform: PlatformAntigravity, Extra: map[string]any{"mixed_scheduling": "true"}},
 			expected: false,
 		},
+		{
+			name:     "copilot平台-mixed_scheduling=true-返回true",
+			account:  Account{Platform: PlatformCopilot, Extra: map[string]any{"mixed_scheduling": true}},
+			expected: true,
+		},
+		{
+			name:     "copilot平台-无extra-返回false",
+			account:  Account{Platform: PlatformCopilot},
+			expected: false,
+		},
+		{
+			name:     "copilot平台-mixed_scheduling=false-返回false",
+			account:  Account{Platform: PlatformCopilot, Extra: map[string]any{"mixed_scheduling": false}},
+			expected: false,
+		},
 	}
 
 	for _, tt := range tests {

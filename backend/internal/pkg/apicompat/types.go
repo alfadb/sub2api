@@ -1,7 +1,7 @@
 // Package apicompat provides type definitions and conversion utilities for
-// translating between Anthropic Messages and OpenAI Responses API formats.
-// It enables multi-protocol support so that clients using different API
-// formats can be served through a unified gateway.
+// translating between Anthropic Messages, OpenAI Chat Completions, and OpenAI
+// Responses API formats. It enables multi-protocol support so that clients
+// using different API formats can be served through a unified gateway.
 package apicompat
 
 import "encoding/json"
@@ -344,6 +344,89 @@ type ResponsesStreamEvent struct {
 	SequenceNumber int `json:"sequence_number,omitempty"`
 }
 
+// ResponsesOutputReasoning is a reasoning output item in the Responses API.
+// This type represents the "type":"reasoning" output item that contains
+// extended thinking from the model.
+type ResponsesOutputReasoning struct {
+	ID               string                      `json:"id,omitempty"`
+	Type             string                      `json:"type"`             // "reasoning"
+	Status           string                      `json:"status,omitempty"` // "in_progress" | "completed" | "incomplete"
+	EncryptedContent string                      `json:"encrypted_content,omitempty"`
+	Summary          []ResponsesReasoningSummary `json:"summary,omitempty"`
+}
+
+// ResponsesReasoningSummary is a summary text block inside a reasoning output.
+type ResponsesReasoningSummary struct {
+	Type string `json:"type"` // "summary_text"
+	Text string `json:"text"`
+}
+
+// ResponsesStreamState maintains the state for converting Responses streaming
+// events to Chat Completions format. It tracks content blocks, tool calls,
+// reasoning blocks, and other streaming artifacts.
+type ResponsesStreamState struct {
+	// Response metadata
+	ID      string
+	Model   string
+	Created int64
+
+	// Content tracking
+	ContentIndex  int
+	CurrentText   string
+	CurrentItemID string
+	PendingText   []string // Text to accumulate before emitting
+
+	// Tool call tracking
+	ToolCalls       []ResponsesToolCallState
+	CurrentToolCall *ResponsesToolCallState
+
+	// Reasoning tracking
+	ReasoningBlocks  []ResponsesReasoningState
+	CurrentReasoning *ResponsesReasoningState
+
+	// Usage tracking
+	InputTokens  int
+	OutputTokens int
+
+	// Status tracking
+	Status       string
+	FinishReason string
+
+	// SSE event tracking
+	currentEventType string
+}
+
+// ResponsesToolCallState tracks a single tool call during streaming.
+type ResponsesToolCallState struct {
+	Index      int
+	ItemID     string
+	CallID     string
+	Name       string
+	Arguments  string
+	Status     string
+	IsComplete bool
+}
+
+// ResponsesReasoningState tracks a reasoning block during streaming.
+type ResponsesReasoningState struct {
+	ItemID       string
+	SummaryIndex int
+	SummaryText  string
+	Status       string
+	IsComplete   bool
+}
+
+// ResponsesUsageDetail provides additional token usage details in Responses format.
+type ResponsesUsageDetail struct {
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
+	TotalTokens  int `json:"total_tokens"`
+
+	// Optional detailed breakdown
+	InputTokensDetails  *ResponsesInputTokensDetails  `json:"input_tokens_details,omitempty"`
+	OutputTokensDetails *ResponsesOutputTokensDetails `json:"output_tokens_details,omitempty"`
+}
+
 // ---------------------------------------------------------------------------
 // OpenAI Chat Completions API types
 // ---------------------------------------------------------------------------
@@ -386,6 +469,10 @@ type ChatMessage struct {
 
 	// Legacy function calling
 	FunctionCall *ChatFunctionCall `json:"function_call,omitempty"`
+
+	// Copilot-specific reasoning passthrough
+	ReasoningText   string `json:"reasoning_text,omitempty"`
+	ReasoningOpaque string `json:"reasoning_opaque,omitempty"`
 }
 
 // ChatContentPart is a typed content part in a multi-modal message.
@@ -487,11 +574,78 @@ type ChatDelta struct {
 	Content          *string        `json:"content,omitempty"` // pointer: omit when not present, null vs "" matters
 	ReasoningContent *string        `json:"reasoning_content,omitempty"`
 	ToolCalls        []ChatToolCall `json:"tool_calls,omitempty"`
+
+	// Copilot-specific reasoning passthrough (streaming)
+	ReasoningText   string `json:"reasoning_text,omitempty"`
+	ReasoningOpaque string `json:"reasoning_opaque,omitempty"`
 }
+
+// ---------------------------------------------------------------------------
+// Backward-compatible type aliases (used by copilot gateway)
+// ---------------------------------------------------------------------------
+
+type ChatRequest = ChatCompletionsRequest
+type ChatResponse = ChatCompletionsResponse
+type ChatStreamChunk = ChatCompletionsChunk
+type ChatStreamChoice = ChatChunkChoice
+type ChatStreamDelta = ChatDelta
 
 // ---------------------------------------------------------------------------
 // Shared constants
 // ---------------------------------------------------------------------------
+
+// ChatFinishToAnthropic maps a Chat Completions finish_reason to an Anthropic stop_reason.
+func ChatFinishToAnthropic(reason string) string {
+	switch reason {
+	case "stop":
+		return "end_turn"
+	case "tool_calls":
+		return "tool_use"
+	case "length":
+		return "max_tokens"
+	default:
+		return "end_turn"
+	}
+}
+
+// AnthropicStopToChat maps an Anthropic stop_reason to a Chat Completions finish_reason.
+func AnthropicStopToChat(reason string) string {
+	switch reason {
+	case "end_turn":
+		return "stop"
+	case "tool_use":
+		return "tool_calls"
+	case "max_tokens":
+		return "length"
+	default:
+		return "stop"
+	}
+}
+
+// ResponsesStatusToChat maps a Responses API status to a Chat Completions finish_reason.
+func ResponsesStatusToChat(status string, details *ResponsesIncompleteDetails) string {
+	switch status {
+	case "completed":
+		return "stop"
+	case "incomplete":
+		if details != nil && details.Reason == "max_output_tokens" {
+			return "length"
+		}
+		return "stop"
+	default:
+		return "stop"
+	}
+}
+
+// ChatFinishToResponsesStatus maps a Chat Completions finish_reason to a Responses status.
+func ChatFinishToResponsesStatus(reason string) string {
+	switch reason {
+	case "length":
+		return "incomplete"
+	default:
+		return "completed"
+	}
+}
 
 // minMaxOutputTokens is the floor for max_output_tokens in a Responses request.
 // Very small values may cause upstream API errors, so we enforce a minimum.

@@ -517,6 +517,18 @@ const routes: RouteRecordRaw[] = [
       descriptionKey: 'admin.usage.description'
     }
   },
+  {
+    path: '/admin/usage-scripts',
+    name: 'AdminUsageScripts',
+    component: () => import('@/views/admin/UsageScriptsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Usage Scripts',
+      titleKey: 'usageScripts.title',
+      descriptionKey: 'usageScripts.description'
+    }
+  },
 
 
   // ==================== Payment Admin Routes ====================

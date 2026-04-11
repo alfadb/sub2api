@@ -695,7 +695,7 @@ func buildForbiddenErrorMessage(prefix string, upstreamMsg string, responseBody 
 
 // handle403 处理 403 Forbidden 错误
 // Antigravity 平台区分 validation/violation/generic 三种类型，均 SetError 永久禁用；
-// 其他平台保持原有 SetError 行为。
+// 其他平台检测配额不足关键词，触发临时暂停而非 error。
 func (s *RateLimitService) handle403(ctx context.Context, account *Account, upstreamMsg string, responseBody []byte) (shouldDisable bool) {
 	if account.Platform == PlatformAntigravity {
 		return s.handleAntigravity403(ctx, account, upstreamMsg, responseBody)
@@ -888,6 +888,17 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 				"account_id", account.ID,
 				"platform", account.Platform,
 				"reason", "no rate limit reset time in headers, likely not a real rate limit")
+			return
+		}
+
+		// Copilot 平台：429 通常是月度配额耗尽，恢复时间由 account_usage_service
+		// 通过 TempUnschedCache 设置（基于 quota_reset_date）。此处不用短 TTL 覆盖，
+		// 避免与配额暂停机制竞争导致前端显示恢复时间只有几分钟。
+		if account.Platform == PlatformCopilot {
+			slog.Warn("rate_limit_429_no_reset_time_skipped",
+				"account_id", account.ID,
+				"platform", account.Platform,
+				"reason", "copilot 429 handled by quota-based TempUnsched, skipping short TTL")
 			return
 		}
 

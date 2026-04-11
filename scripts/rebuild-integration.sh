@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 自动枚举待合并的本地分支：基于 main 且不是 main/priv-overlay/integration 的分支
+# 自动枚举待合并的本地分支：与 main 有共同祖先、且有 main 之外的新 commit
 # 排除规则：main、priv-overlay、integration*（含 integration-old）
+#
+# 注意：不能用 `git merge-base --is-ancestor main <branch>`，这会要求分支必须
+# 直接基于 _当前_ main（即 main 是分支祖先）。upstream 同步后新 main 通常不是
+# 旧 fix 分支的祖先（除非显式 rebase），会导致 fix 分支被漏扫。
+# 正确做法：`git merge-base main <branch>` 只要求存在公共祖先，这在所有 fork
+# 分支场景下都成立。
 EXCLUDED_PATTERN='^(main|priv-overlay|integration.*)$'
 
 echo "🔍 扫描待合并分支..."
@@ -12,8 +18,8 @@ for branch in $(git for-each-ref --format='%(refname:short)' refs/heads/ | sort)
     if [[ "$branch" =~ $EXCLUDED_PATTERN ]]; then
         continue
     fi
-    # 检查是否基于 main（main 是该分支的祖先）
-    if git merge-base --is-ancestor main "$branch" 2>/dev/null; then
+    # 检查是否与 main 有共同祖先（即属于同一仓库的分支图）
+    if git merge-base main "$branch" >/dev/null 2>&1; then
         # 检查是否有 main 之外的新 commit
         if [ "$(git rev-list main.."$branch" --count)" -gt 0 ]; then
             PENDING_BRANCHES+=("$branch")

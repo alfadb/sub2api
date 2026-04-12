@@ -28,6 +28,7 @@ import (
 // OpenAIGatewayHandler handles OpenAI API gateway requests
 type OpenAIGatewayHandler struct {
 	gatewayService          *service.OpenAIGatewayService
+	copilotGatewayService   *service.CopilotGatewayService
 	billingCacheService     *service.BillingCacheService
 	apiKeyService           *service.APIKeyService
 	usageRecordWorkerPool   *service.UsageRecordWorkerPool
@@ -57,6 +58,7 @@ func resolveOpenAIMessagesDispatchMappedModel(apiKey *service.APIKey, requestedM
 // NewOpenAIGatewayHandler creates a new OpenAIGatewayHandler
 func NewOpenAIGatewayHandler(
 	gatewayService *service.OpenAIGatewayService,
+	copilotGatewayService *service.CopilotGatewayService,
 	concurrencyService *service.ConcurrencyService,
 	billingCacheService *service.BillingCacheService,
 	apiKeyService *service.APIKeyService,
@@ -74,6 +76,7 @@ func NewOpenAIGatewayHandler(
 	}
 	return &OpenAIGatewayHandler{
 		gatewayService:          gatewayService,
+		copilotGatewayService:   copilotGatewayService,
 		billingCacheService:     billingCacheService,
 		apiKeyService:           apiKeyService,
 		usageRecordWorkerPool:   usageRecordWorkerPool,
@@ -299,7 +302,16 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		if channelMapping.Mapped {
 			forwardBody = h.gatewayService.ReplaceModelInBody(body, channelMapping.MappedModel)
 		}
-		result, err := h.gatewayService.Forward(c.Request.Context(), c, account, forwardBody)
+		var result *service.OpenAIForwardResult
+		if account.Platform == service.PlatformCopilot {
+			fwdResult, fwdErr := h.copilotGatewayService.ForwardResponses(c.Request.Context(), c, account, forwardBody)
+			err = fwdErr
+			if fwdResult != nil {
+				result = forwardResultToOpenAI(fwdResult)
+			}
+		} else {
+			result, err = h.gatewayService.Forward(c.Request.Context(), c, account, forwardBody)
+		}
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
 		if accountReleaseFunc != nil {
 			accountReleaseFunc()
@@ -1437,39 +1449,17 @@ func (h *OpenAIGatewayHandler) handleConcurrencyError(c *gin.Context, err error,
 }
 
 func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverErr *service.UpstreamFailoverError, streamStarted bool) {
-	statusCode := failoverErr.StatusCode
-	responseBody := failoverErr.ResponseBody
-
-	// 先检查透传规则
-	if h.errorPassthroughService != nil && len(responseBody) > 0 {
-		if rule := h.errorPassthroughService.MatchRule("openai", statusCode, responseBody); rule != nil {
-			// 确定响应状态码
-			respCode := statusCode
-			if !rule.PassthroughCode && rule.ResponseCode != nil {
-				respCode = *rule.ResponseCode
-			}
-
-			// 确定响应消息
-			msg := service.ExtractUpstreamErrorMessage(responseBody)
-			if !rule.PassthroughBody && rule.CustomMessage != nil {
-				msg = *rule.CustomMessage
-			}
-
-			if rule.SkipMonitoring {
-				c.Set(service.OpsSkipPassthroughKey, true)
-			}
-
-			h.handleStreamingAwareError(c, respCode, "upstream_error", msg, streamStarted)
-			return
-		}
+	if status, errType, errMsg, matched := applyFailoverPassthroughRule(c, h.errorPassthroughService, "openai", failoverErr); matched {
+		h.handleStreamingAwareError(c, status, errType, errMsg, streamStarted)
+		return
 	}
 
 	// 记录原始上游状态码，以便 ops 错误日志捕获真实的上游错误
-	upstreamMsg := service.ExtractUpstreamErrorMessage(responseBody)
-	service.SetOpsUpstreamError(c, statusCode, upstreamMsg, "")
+	upstreamMsg := service.ExtractUpstreamErrorMessage(failoverErr.ResponseBody)
+	service.SetOpsUpstreamError(c, failoverErr.StatusCode, upstreamMsg, "")
 
 	// 使用默认的错误映射
-	status, errType, errMsg := h.mapUpstreamError(statusCode)
+	status, errType, errMsg := h.mapUpstreamError(failoverErr.StatusCode)
 	h.handleStreamingAwareError(c, status, errType, errMsg, streamStarted)
 }
 
@@ -1610,4 +1600,19 @@ func summarizeWSCloseErrorForLog(err error) (string, string) {
 		}
 	}
 	return closeStatus, closeReason
+}
+
+// forwardResultToOpenAI converts a ForwardResult (from Copilot) to OpenAIForwardResult.
+func forwardResultToOpenAI(r *service.ForwardResult) *service.OpenAIForwardResult {
+	return &service.OpenAIForwardResult{
+		RequestID: r.RequestID,
+		Usage: service.OpenAIUsage{
+			InputTokens:  r.Usage.InputTokens,
+			OutputTokens: r.Usage.OutputTokens,
+		},
+		Model:        r.Model,
+		Stream:       r.Stream,
+		Duration:     r.Duration,
+		FirstTokenMs: r.FirstTokenMs,
+	}
 }

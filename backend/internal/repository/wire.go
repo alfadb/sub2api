@@ -89,6 +89,7 @@ var ProviderSet = wire.NewSet(
 	NewErrorPassthroughRepository,
 	NewTLSFingerprintProfileRepository,
 	NewChannelRepository,
+	NewUsageScriptRepository,
 
 	// Cache implementations
 	NewGatewayCache,
@@ -128,6 +129,7 @@ var ProviderSet = wire.NewSet(
 	ProvideGitHubReleaseClient,
 	NewProxyExitInfoProber,
 	NewClaudeUsageFetcher,
+	NewCopilotUsageFetcher,
 	NewClaudeOAuthClient,
 	NewHTTPUpstream,
 	NewOpenAIOAuthClient,

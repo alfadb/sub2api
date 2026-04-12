@@ -17,6 +17,7 @@ type AdminHandlers struct {
 	OpenAIOAuth           *admin.OpenAIOAuthHandler
 	GeminiOAuth           *admin.GeminiOAuthHandler
 	AntigravityOAuth      *admin.AntigravityOAuthHandler
+	CopilotOAuth          *admin.CopilotOAuthHandler
 	Proxy                 *admin.ProxyHandler
 	Redeem                *admin.RedeemHandler
 	Promo                 *admin.PromoHandler
@@ -32,6 +33,7 @@ type AdminHandlers struct {
 	ScheduledTest         *admin.ScheduledTestHandler
 	Channel               *admin.ChannelHandler
 	Payment               *admin.PaymentHandler
+	UsageScript           *admin.UsageScriptHandler
 }
 
 // Handlers contains all HTTP handlers
@@ -46,6 +48,8 @@ type Handlers struct {
 	Admin          *AdminHandlers
 	Gateway        *GatewayHandler
 	OpenAIGateway  *OpenAIGatewayHandler
+	CopilotGateway *CopilotGatewayHandler
+	Responses      *ResponsesHandler
 	Setting        *SettingHandler
 	Totp           *TotpHandler
 	Payment        *PaymentHandler

@@ -138,6 +138,13 @@ func ProvideUsageCleanupService(repo UsageCleanupRepository, timingWheel *Timing
 }
 
 // ProvideAccountExpiryService creates and starts AccountExpiryService.
+// ProvideOpenCodeVersionService creates and starts OpenCodeVersionService.
+func ProvideOpenCodeVersionService() *OpenCodeVersionService {
+	svc := NewOpenCodeVersionService()
+	svc.Start()
+	return svc
+}
+
 func ProvideAccountExpiryService(accountRepo AccountRepository) *AccountExpiryService {
 	svc := NewAccountExpiryService(accountRepo, time.Minute)
 	svc.Start()
@@ -340,6 +347,18 @@ func ProvideScheduledTestRunnerService(
 	return svc
 }
 
+// ProvideScriptUsageCheckService creates and starts ScriptUsageCheckService.
+func ProvideScriptUsageCheckService(
+	accountRepo AccountRepository,
+	usageScriptRepo UsageScriptRepository,
+	accountUsageSvc *AccountUsageService,
+	cfg *config.Config,
+) *ScriptUsageCheckService {
+	svc := NewScriptUsageCheckService(accountRepo, usageScriptRepo, accountUsageSvc, cfg)
+	svc.Start()
+	return svc
+}
+
 // ProvideOpsScheduledReportService creates and starts OpsScheduledReportService.
 func ProvideOpsScheduledReportService(
 	opsService *OpsService,
@@ -415,6 +434,10 @@ var ProviderSet = wire.NewSet(
 	ProvideOpenAITokenProvider,
 	ProvideClaudeTokenProvider,
 	NewAntigravityGatewayService,
+	NewCopilotGatewayService,
+	NewCopilotTokenProvider,
+	NewCopilotOAuthService,
+	ProvideOpenCodeVersionService,
 	ProvideRateLimitService,
 	NewAccountUsageService,
 	NewAccountTestService,
@@ -448,6 +471,7 @@ var ProviderSet = wire.NewSet(
 	ProvideUsageCleanupService,
 	ProvideDeferredService,
 	NewAntigravityQuotaFetcher,
+	NewScriptEngine,
 	NewUserAttributeService,
 	NewUsageCache,
 	NewTotpService,
@@ -465,6 +489,7 @@ var ProviderSet = wire.NewSet(
 	ProvidePaymentConfigService,
 	NewPaymentService,
 	ProvidePaymentOrderExpiryService,
+	ProvideScriptUsageCheckService,
 )
 
 // ProvidePaymentConfigService wraps NewPaymentConfigService to accept the named

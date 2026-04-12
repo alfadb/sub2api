@@ -22,6 +22,7 @@ const (
 	PlatformOpenAI      = "openai"
 	PlatformGemini      = "gemini"
 	PlatformAntigravity = "antigravity"
+	PlatformCopilot     = "copilot"
 )
 
 // Account type constants
@@ -136,4 +137,36 @@ var DefaultBedrockModelMapping = map[string]string{
 	// Claude Haiku
 	"claude-haiku-4-5":          "us.anthropic.claude-haiku-4-5-20251001-v1:0",
 	"claude-haiku-4-5-20251001": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+}
+
+// DefaultCopilotModelMapping 是 Copilot 平台的默认模型映射
+// 当账号未配置 model_mapping 时使用此默认值
+// 与数据库中管理员验证的模型映射保持一致
+var DefaultCopilotModelMapping = map[string]string{
+	// Claude (dot 格式)
+	"claude-haiku-4.5":  "claude-haiku-4.5",
+	"claude-opus-4.5":   "claude-opus-4.5",
+	"claude-opus-4.6":   "claude-opus-4.6",
+	"claude-sonnet-4.5": "claude-sonnet-4.5",
+	"claude-sonnet-4.6": "claude-sonnet-4.6",
+	// Claude (dash 格式 → dot 格式)
+	"claude-haiku-4-5":           "claude-haiku-4.5",
+	"claude-haiku-4-5-20251001":  "claude-haiku-4.5",
+	"claude-opus-4-5":            "claude-opus-4.5",
+	"claude-opus-4-5-20251101":   "claude-opus-4.5",
+	"claude-opus-4-6":            "claude-opus-4.6",
+	"claude-sonnet-4-5":          "claude-sonnet-4.5",
+	"claude-sonnet-4-5-20250929": "claude-sonnet-4.5",
+	"claude-sonnet-4-6":          "claude-sonnet-4.6",
+	// GPT
+	"gpt-5-mini":         "gpt-5-mini",
+	"gpt-5.1":            "gpt-5.1",
+	"gpt-5.2":            "gpt-5.2",
+	"gpt-5.1-codex":      "gpt-5.1-codex",
+	"gpt-5.1-codex-max":  "gpt-5.1-codex-max",
+	"gpt-5.1-codex-mini": "gpt-5.1-codex-mini",
+	"gpt-5.2-codex":      "gpt-5.2-codex",
+	// Gemini
+	"gemini-3-flash-preview": "gemini-3-flash-preview",
+	"gemini-3.1-pro-preview": "gemini-3.1-pro-preview",
 }

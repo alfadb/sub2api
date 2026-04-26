@@ -92,6 +92,7 @@ var ProviderSet = wire.NewSet(
 	NewChannelMonitorRepository,
 	NewChannelMonitorRequestTemplateRepository,
 	NewAffiliateRepository,
+	NewUsageScriptRepository,
 
 	// Cache implementations
 	NewGatewayCache,
@@ -133,6 +134,7 @@ var ProviderSet = wire.NewSet(
 	ProvideGitHubReleaseClient,
 	NewProxyExitInfoProber,
 	NewClaudeUsageFetcher,
+	NewCopilotUsageFetcher,
 	NewClaudeOAuthClient,
 	NewHTTPUpstream,
 	NewOpenAIOAuthClient,

@@ -34,9 +34,17 @@ func (r schedulerTestOpenAIAccountRepo) GetByID(ctx context.Context, id int64) (
 }
 
 func (r schedulerTestOpenAIAccountRepo) ListSchedulableByGroupIDAndPlatform(ctx context.Context, groupID int64, platform string) ([]Account, error) {
+	return r.ListSchedulableByGroupIDAndPlatforms(ctx, groupID, []string{platform})
+}
+
+func (r schedulerTestOpenAIAccountRepo) ListSchedulableByGroupIDAndPlatforms(ctx context.Context, groupID int64, platforms []string) ([]Account, error) {
+	platformSet := make(map[string]bool, len(platforms))
+	for _, p := range platforms {
+		platformSet[p] = true
+	}
 	var result []Account
 	for _, acc := range r.accounts {
-		if acc.Platform == platform {
+		if platformSet[acc.Platform] {
 			result = append(result, acc)
 		}
 	}

@@ -340,7 +340,7 @@ func (s *CopilotGatewayService) ForwardMessages(ctx context.Context, c *gin.Cont
 
 	// Sanitize request body: remove empty text blocks and thinking blocks that
 	// Copilot upstream rejects (e.g. "text content blocks must be non-empty").
-	body = FilterThinkingBlocksForRetry(body)
+	body = FilterThinkingBlocksForRetry(body, mappedModel)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, copilotUpstreamMessagesURL, bytes.NewReader(body))
 	if err != nil {

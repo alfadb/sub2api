@@ -361,7 +361,15 @@ func (s *OpsService) executeRetry(ctx context.Context, errorLog *OpsErrorLogDeta
 
 	switch reqType {
 	case opsRetryTypeMessages:
-		bodyBytes = FilterThinkingBlocksForRetry(bodyBytes)
+		// 协议族判断必须用「映射后发给上游的模型 ID」(UpstreamModel)，
+		// 不能用客户端原始请求的 Model——否则 model_mapping 配置
+		// (claude-* → deepseek-*) 会把 passback-required 上游误判为
+		// anthropic-strict，retry 仍对 thinking 做整流，继续触发 400。
+		retryModel := errorLog.UpstreamModel
+		if retryModel == "" {
+			retryModel = errorLog.Model
+		}
+		bodyBytes = FilterThinkingBlocksForRetry(bodyBytes, retryModel)
 	case opsRetryTypeOpenAI, opsRetryTypeGeminiV1B:
 		// No-op
 	}

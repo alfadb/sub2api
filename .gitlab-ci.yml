@@ -1,0 +1,101 @@
+stages:
+  - test
+  - package
+  - deploy
+
+# ── 质量门禁（integration / priv-overlay push 触发） ──
+
+backend-test:
+  stage: test
+  image: hub.alfadb.cn/docker.io/golang:1.26.2-alpine
+  rules:
+    - if: $CI_COMMIT_BRANCH =~ /^(integration|priv-overlay)$/
+  variables:
+    GOPATH: $CI_PROJECT_DIR/.go
+  cache:
+    key:
+      files:
+        - backend/go.sum
+      prefix: go-mod
+    paths:
+      - .go/pkg/mod/
+  script:
+    - cd backend
+    - go test -tags unit -count=1 ./...
+    - go vet ./...
+
+backend-lint:
+  stage: test
+  image: hub.alfadb.cn/docker.io/golangci/golangci-lint:v2.9-alpine
+  rules:
+    - if: $CI_COMMIT_BRANCH =~ /^(integration|priv-overlay)$/
+  variables:
+    GOPATH: $CI_PROJECT_DIR/.go
+    GOLANGCI_LINT_CACHE: $CI_PROJECT_DIR/.golangci-lint-cache
+  cache:
+    key:
+      files:
+        - backend/go.sum
+      prefix: go-mod
+    paths:
+      - .go/pkg/mod/
+      - .golangci-lint-cache/
+  script:
+    - cd backend
+    - golangci-lint run --timeout=30m ./...
+
+frontend-build:
+  stage: test
+  image: hub.alfadb.cn/docker.io/node:24-alpine
+  rules:
+    - if: $CI_COMMIT_BRANCH =~ /^(integration|priv-overlay)$/
+  cache:
+    key:
+      files:
+        - frontend/pnpm-lock.yaml
+      prefix: pnpm
+    paths:
+      - frontend/node_modules/
+  before_script:
+    - corepack enable && corepack prepare pnpm@9 --activate
+  script:
+    - cd frontend
+    - pnpm install --frozen-lockfile
+    - pnpm build
+
+# ── 打包 & 部署（tag 触发） ──
+
+package:
+  stage: package
+  image: hub.alfadb.cn/devel/buildkit:rootless
+  tags:
+    - root
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - |
+      # Backend version is embedded from backend/cmd/server/VERSION at build time.
+      # Keep it in sync with the Git tag to avoid stale UI version display.
+      echo "${CI_COMMIT_TAG#v}" > backend/cmd/server/VERSION
+
+      # Inject 'go mod tidy' into Dockerfile before build step to handle
+      # upstream go.mod that may be out of sync with actual imports.
+      sed -i '/^COPY backend\/ \.\//a RUN go mod tidy' Dockerfile
+
+      buildctl-daemonless.sh build \
+        --frontend dockerfile.v0 \
+        --local context=. \
+        --local dockerfile=. \
+        --opt filename=Dockerfile \
+        --opt build-arg:COMMIT=${CI_COMMIT_SHA} \
+        --export-cache type=registry,ref=hub.alfadb.cn/cache/sub2api:build,mode=max \
+        --import-cache type=registry,ref=hub.alfadb.cn/cache/sub2api:build \
+        --output type=image,name=hub.alfadb.cn/devel/sub2api:${CI_COMMIT_TAG},push=true
+
+deploy:
+  stage: deploy
+  image: hub.alfadb.cn/builder/bitnami/kubectl:latest
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - kubectl -n dev set image deployment/sub2api sub2api=hub.alfadb.cn/devel/sub2api:${CI_COMMIT_TAG}

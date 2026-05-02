@@ -358,6 +358,8 @@ export default {
     redeemCodes: '兑换码',
     ops: '运维监控',
     promoCodes: '优惠码',
+    dataManagement: '数据管理',
+    usageScripts: '用量脚本',
     settings: '系统设置',
     myAccount: '我的账户',
     lightMode: '浅色模式',
@@ -2007,6 +2009,7 @@ export default {
         openai: 'OpenAI',
         gemini: 'Gemini',
         antigravity: 'Antigravity',
+        copilot: 'Copilot'
       },
       saving: '保存中...',
       noGroups: '暂无分组',
@@ -2761,6 +2764,7 @@ export default {
         anthropic: 'Anthropic',
         gemini: 'Gemini',
         antigravity: 'Antigravity',
+        copilot: 'Copilot'
       },
       types: {
         oauth: 'OAuth',
@@ -3404,6 +3408,26 @@ export default {
           validateAndCreate: '验证并创建账号',
           pleaseEnterRefreshToken: '请输入 Refresh Token',
           failedToValidateRT: '验证 Refresh Token 失败'
+        },
+        // Copilot specific (Device Code Flow)
+        copilot: {
+          title: 'GitHub Copilot 授权',
+          deviceCodeTitle: 'GitHub Device Code',
+          deviceCodeDesc: '通过 GitHub OAuth 授权连接 Copilot',
+          connectButton: '连接 GitHub Copilot',
+          startingFlow: '正在发起 Device Code Flow...',
+          failedToStartFlow: '发起 GitHub Device Code Flow 失败',
+          enterCodePrompt: '请在 GitHub 上输入以下代码完成授权：',
+          openGitHub: '打开 GitHub 授权',
+          copyCode: '复制代码',
+          codeCopied: '代码已复制到剪贴板',
+          waitingForAuth: '等待授权中...',
+          waitingForAuthDesc: '请在浏览器中完成授权，此页面将自动更新。',
+          noDeviceCode: '没有可用的设备代码，请先发起授权流程。',
+          codeExpired: '授权代码已过期，请重试。',
+          authFailed: 'GitHub 授权失败',
+          authSuccess: 'GitHub Copilot 授权成功',
+          accountCreated: 'Copilot 账号创建成功'
         }
       },
       // Gemini specific (platform-wide)
@@ -5957,6 +5981,51 @@ export default {
       loadFailed: '加载模板失败',
       saveFailed: '保存模板失败',
       deleteFailed: '删除模板失败'
+    }
+  },
+
+  usageScripts: {
+    title: '用量脚本',
+    description: '管理第三方中转站用量采集的 Starlark 脚本',
+    create: '创建脚本',
+    edit: '编辑脚本',
+    noScripts: '暂无用量脚本',
+    createFirst: '创建第一个用量脚本',
+
+    columns: {
+      baseUrlHost: '上游域名',
+      accountType: '账号类型',
+      script: '脚本',
+      enabled: '启用',
+      createdAt: '创建时间',
+      actions: '操作'
+    },
+
+    form: {
+      baseUrlHost: '上游域名',
+      baseUrlHostPlaceholder: '例如：https://api.example.com',
+      baseUrlHostHint: '域名级匹配（scheme://host）',
+      accountType: '账号类型',
+      accountTypePlaceholder: '选择账号类型',
+      script: 'Starlark 脚本',
+      scriptPlaceholder: 'def fetch_usage(ctx):\n    ...',
+      enabled: '启用'
+    },
+
+    accountTypes: {
+      oauth: 'OAuth',
+      apikey: 'API Key',
+      'setup-token': 'Setup Token'
+    },
+
+    messages: {
+      created: '用量脚本创建成功',
+      updated: '用量脚本更新成功',
+      deleted: '用量脚本删除成功',
+      deleteConfirm: '确定要删除此用量脚本吗？',
+      failedToLoad: '加载用量脚本失败',
+      failedToSave: '保存用量脚本失败',
+      failedToDelete: '删除用量脚本失败'
     }
   },
 

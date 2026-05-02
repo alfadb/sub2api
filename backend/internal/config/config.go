@@ -84,6 +84,7 @@ type Config struct {
 	UsageCleanup            UsageCleanupConfig            `mapstructure:"usage_cleanup"`
 	Concurrency             ConcurrencyConfig             `mapstructure:"concurrency"`
 	TokenRefresh            TokenRefreshConfig            `mapstructure:"token_refresh"`
+	ScriptUsageCheck        ScriptUsageCheckConfig        `mapstructure:"script_usage_check"`
 	RunMode                 string                        `mapstructure:"run_mode" yaml:"run_mode"`
 	Timezone                string                        `mapstructure:"timezone"` // e.g. "Asia/Shanghai", "UTC"
 	Gemini                  GeminiConfig                  `mapstructure:"gemini"`
@@ -471,6 +472,13 @@ type TokenRefreshConfig struct {
 	MaxRetries int `mapstructure:"max_retries"`
 	// 重试退避基础时间（秒）
 	RetryBackoffSeconds int `mapstructure:"retry_backoff_seconds"`
+}
+
+type ScriptUsageCheckConfig struct {
+	// 是否启用脚本用量检查
+	Enabled bool `mapstructure:"enabled"`
+	// 检查间隔（秒）
+	IntervalSeconds int `mapstructure:"interval_seconds"`
 }
 
 type PricingConfig struct {
@@ -1742,6 +1750,10 @@ func setDefaults() {
 	viper.SetDefault("token_refresh.refresh_before_expiry_hours", 0.5) // 提前30分钟刷新（适配Google 1小时token）
 	viper.SetDefault("token_refresh.max_retries", 3)                   // 最多重试3次
 	viper.SetDefault("token_refresh.retry_backoff_seconds", 2)         // 重试退避基础2秒
+
+	// ScriptUsageCheck
+	viper.SetDefault("script_usage_check.enabled", true)
+	viper.SetDefault("script_usage_check.interval_seconds", 120) // 默认 2 分钟
 
 	// Gemini OAuth - configure via environment variables or config file
 	// GEMINI_OAUTH_CLIENT_ID and GEMINI_OAUTH_CLIENT_SECRET

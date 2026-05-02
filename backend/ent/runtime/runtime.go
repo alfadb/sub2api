@@ -35,6 +35,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/tlsfingerprintprofile"
 	"github.com/Wei-Shaw/sub2api/ent/usagecleanuptask"
 	"github.com/Wei-Shaw/sub2api/ent/usagelog"
+	"github.com/Wei-Shaw/sub2api/ent/usagescript"
 	"github.com/Wei-Shaw/sub2api/ent/user"
 	"github.com/Wei-Shaw/sub2api/ent/userallowedgroup"
 	"github.com/Wei-Shaw/sub2api/ent/userattributedefinition"
@@ -1718,6 +1719,51 @@ func init() {
 	usagelogDescCreatedAt := usagelogFields[36].Descriptor()
 	// usagelog.DefaultCreatedAt holds the default value on creation for the created_at field.
 	usagelog.DefaultCreatedAt = usagelogDescCreatedAt.Default.(func() time.Time)
+	usagescriptMixin := schema.UsageScript{}.Mixin()
+	usagescriptMixinHooks1 := usagescriptMixin[1].Hooks()
+	usagescript.Hooks[0] = usagescriptMixinHooks1[0]
+	usagescriptMixinInters1 := usagescriptMixin[1].Interceptors()
+	usagescript.Interceptors[0] = usagescriptMixinInters1[0]
+	usagescriptMixinFields0 := usagescriptMixin[0].Fields()
+	_ = usagescriptMixinFields0
+	usagescriptFields := schema.UsageScript{}.Fields()
+	_ = usagescriptFields
+	// usagescriptDescCreatedAt is the schema descriptor for created_at field.
+	usagescriptDescCreatedAt := usagescriptMixinFields0[0].Descriptor()
+	// usagescript.DefaultCreatedAt holds the default value on creation for the created_at field.
+	usagescript.DefaultCreatedAt = usagescriptDescCreatedAt.Default.(func() time.Time)
+	// usagescriptDescUpdatedAt is the schema descriptor for updated_at field.
+	usagescriptDescUpdatedAt := usagescriptMixinFields0[1].Descriptor()
+	// usagescript.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	usagescript.DefaultUpdatedAt = usagescriptDescUpdatedAt.Default.(func() time.Time)
+	// usagescript.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	usagescript.UpdateDefaultUpdatedAt = usagescriptDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// usagescriptDescBaseURLHost is the schema descriptor for base_url_host field.
+	usagescriptDescBaseURLHost := usagescriptFields[0].Descriptor()
+	// usagescript.BaseURLHostValidator is a validator for the "base_url_host" field. It is called by the builders before save.
+	usagescript.BaseURLHostValidator = usagescriptDescBaseURLHost.Validators[0].(func(string) error)
+	// usagescriptDescAccountType is the schema descriptor for account_type field.
+	usagescriptDescAccountType := usagescriptFields[1].Descriptor()
+	// usagescript.AccountTypeValidator is a validator for the "account_type" field. It is called by the builders before save.
+	usagescript.AccountTypeValidator = func() func(string) error {
+		validators := usagescriptDescAccountType.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(account_type string) error {
+			for _, fn := range fns {
+				if err := fn(account_type); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// usagescriptDescEnabled is the schema descriptor for enabled field.
+	usagescriptDescEnabled := usagescriptFields[3].Descriptor()
+	// usagescript.DefaultEnabled holds the default value on creation for the enabled field.
+	usagescript.DefaultEnabled = usagescriptDescEnabled.Default.(bool)
 	userMixin := schema.User{}.Mixin()
 	userMixinHooks1 := userMixin[1].Hooks()
 	user.Hooks[0] = userMixinHooks1[0]

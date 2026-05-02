@@ -136,3 +136,7 @@ docs/*
 frontend/coverage/
 aicodex
 output/
+
+# qmd 本地检索工具（策略 B：配置含绝对路径，不入 git）
+/.mcp.json
+.qmd/

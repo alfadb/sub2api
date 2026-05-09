@@ -160,3 +160,6 @@ output/
 # qmd 本地检索工具（策略 B：配置含绝对路径，不入 git）
 /.mcp.json
 .qmd/
+
+# pi 框架本地状态产物（astack 中间文件 / imagine 生成产物等）
+.pi-astack/

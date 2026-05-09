@@ -7,7 +7,7 @@ stages:
 
 backend-test:
   stage: test
-  image: hub.alfadb.cn/docker.io/golang:1.26.2-alpine
+  image: hub.alfadb.cn/docker.io/golang:1.26.3-alpine
   rules:
     - if: $CI_COMMIT_BRANCH == "integration"
   variables:

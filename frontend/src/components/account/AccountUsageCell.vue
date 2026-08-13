@@ -548,6 +548,10 @@
         v-if="account.ollama_cloud_usage?.eligible"
         :account="account"
       />
+      <OpenCodeGoUsageCell
+        v-if="account.opencode_go_usage?.eligible"
+        :account="account"
+      />
       <!-- Today stats row (requests, tokens, cost, user_cost) -->
       <div
         v-if="todayStats"
@@ -626,6 +630,7 @@ import AccountQuotaInfo from './AccountQuotaInfo.vue'
 import OpenAIQuotaResetCell from './OpenAIQuotaResetCell.vue'
 import GrokQuotaProbeCell from './GrokQuotaProbeCell.vue'
 import OllamaCloudUsageCell from './OllamaCloudUsageCell.vue'
+import OpenCodeGoUsageCell from './OpenCodeGoUsageCell.vue'
 
 // Module-level cache shared across all AccountUsageCell instances
 const _usageCache = new Map<number, { data: AccountUsageInfo; ts: number }>()

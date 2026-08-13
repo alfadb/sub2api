@@ -381,9 +381,10 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()
 			}
-			// Transport attempt left local validation; count Ollama Cloud activity.
+			// Transport attempt left local validation; count Ollama Cloud / OpenCode Go activity.
 			if !errors.Is(err, context.Canceled) {
 				scheduleOllamaCloudUsageActivity(s.deferredService, account)
+				scheduleOpenCodeGoUsageActivity(s.deferredService, account)
 			}
 			// Ensure the client receives an error response (handlers assume Forward writes on non-failover errors).
 			safeErr := sanitizeUpstreamErrorMessage(err.Error())

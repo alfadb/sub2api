@@ -116,6 +116,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 			}
 			if !errors.Is(err, context.Canceled) {
 				scheduleOllamaCloudUsageActivity(s.deferredService, account)
+				scheduleOpenCodeGoUsageActivity(s.deferredService, account)
 			}
 			safeErr := sanitizeUpstreamErrorMessage(err.Error())
 			setOpsUpstreamError(c, 0, safeErr, "")

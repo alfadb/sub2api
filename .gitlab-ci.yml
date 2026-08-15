@@ -7,7 +7,7 @@ stages:
 
 backend-test:
   stage: test
-  image: hub.alfadb.cn/docker.io/golang:1.26.5-alpine
+  image: hub.alfadb.cn/docker.io/golang:1.26.6-alpine
   rules:
     - if: $CI_COMMIT_BRANCH == "integration"
   variables:
@@ -88,6 +88,7 @@ package:
         --local dockerfile=. \
         --opt filename=Dockerfile \
         --opt build-arg:COMMIT=${CI_COMMIT_SHA} \
+        --opt build-arg:GOLANG_IMAGE=golang:1.26.6-alpine \
         --export-cache type=registry,ref=hub.alfadb.cn/cache/sub2api:build,mode=max \
         --import-cache type=registry,ref=hub.alfadb.cn/cache/sub2api:build \
         --output type=image,name=hub.alfadb.cn/devel/sub2api:${CI_COMMIT_TAG},push=true

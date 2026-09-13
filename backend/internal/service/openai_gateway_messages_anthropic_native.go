@@ -139,11 +139,10 @@ func (s *OpenAIGatewayService) nativeAnthropicTargetURL(account *Account) (strin
 	if err != nil {
 		return "", fmt.Errorf("invalid base_url: %w", err)
 	}
-	if account.IsOpenCodeGo() {
-		// OpenCode Go 的 Chat Completions base 带 /v1；用版本感知拼接避免 /v1/v1/messages。
-		return buildOpenAIEndpointURL(validatedURL, "/v1/messages"), nil
-	}
-	return strings.TrimRight(validatedURL, "/") + "/v1/messages", nil
+	// 版本感知拼接：base 已带 /v1 时不再追加，避免拼出 /v1/v1/messages
+	//（OpenCode Go 的 Chat Completions base 带 /v1，Ollama Cloud 的 anthropic
+	// 默认 base 不带）。
+	return buildOpenAIEndpointURL(validatedURL, "/v1/messages"), nil
 }
 
 func resolveOpenCodeGoMappedModel(account *Account, body []byte, defaultMappedModel string) string {
@@ -179,6 +178,13 @@ func (s *OpenAIGatewayService) buildNativeAnthropicUpstreamRequest(
 	// 的 base 取值同源（GetAnthropicProtocolBaseURL，adaptive 时是 Anthropic 协议
 	// 地址而非 CC/Responses 地址），详见 helper 注释。
 	body = clampOllamaCloudAnthropicMessagesMaxTokens(account, account.GetAnthropicProtocolBaseURL(), body)
+
+	// Ollama Cloud 请求期定价预检（api_protocol=anthropic 的独立构造器，覆盖
+	// messages / responses / chat_completions 三条 anthropic 原生直通入站）：未定价
+	// 模型在任何上游 I/O 之前显式 400，且 400 已由 helper 写出。
+	if err := s.enforceOllamaCloudRequestPricingPreflight(ctx, c, account, body); err != nil {
+		return nil, nil, err
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {

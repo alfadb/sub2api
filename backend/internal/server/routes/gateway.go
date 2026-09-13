@@ -499,12 +499,12 @@ func getGroupPlatform(c *gin.Context) string {
 }
 
 // isOpenAICompatibleGatewayFamilyPlatform 报告单个平台是否经 OpenAI 网关转发
-// （openai/grok/国产 OpenAI 兼容供应商/OpenCode Go）。
+// （openai/grok/国产 OpenAI 兼容供应商/OpenCode Go/Ollama Cloud）。
 func isOpenAICompatibleGatewayFamilyPlatform(platform string) bool {
 	switch platform {
 	case service.PlatformOpenAI, service.PlatformGrok,
 		service.PlatformKimi, service.PlatformZhipu, service.PlatformDeepseek,
-		service.PlatformMiniMax, service.PlatformOpenCodeGo:
+		service.PlatformMiniMax, service.PlatformOpenCodeGo, service.PlatformOllamaCloud:
 		// 国产 OpenAI 兼容供应商与 openai/grok 一样经 OpenAI 网关转发。
 		return true
 	default:
@@ -603,7 +603,7 @@ func dispatchOpenAICompatibleCountTokens(c *gin.Context, compatibleHandler, grok
 		return
 	}
 	switch getGroupPlatform(c) {
-	case service.PlatformOpenAI, service.PlatformKimi, service.PlatformZhipu, service.PlatformDeepseek, service.PlatformMiniMax, service.PlatformOpenCodeGo:
+	case service.PlatformOpenAI, service.PlatformKimi, service.PlatformZhipu, service.PlatformDeepseek, service.PlatformMiniMax, service.PlatformOpenCodeGo, service.PlatformOllamaCloud:
 		compatibleHandler(c)
 	case service.PlatformGrok:
 		grokHandler(c)

@@ -9,7 +9,9 @@ set -euo pipefail
 # 旧 fix 分支的祖先（除非显式 rebase），会导致 fix 分支被漏扫。
 # 正确做法：`git merge-base main <branch>` 只要求存在公共祖先，这在所有 fork
 # 分支场景下都成立。
-EXCLUDED_PATTERN='^(main|priv-infra|integration.*)$'
+# feature/typesafe-platform-upstream 仅供 upstream PR #7462 使用，不参与部署；
+# 部署使用 feature/typesafe-platform。按完整分支名精确排除，避免前缀匹配连带排除后者。
+EXCLUDED_PATTERN='^(main|priv-infra|integration.*|feature/typesafe-platform-upstream)$'
 
 echo "🔍 扫描待合并分支..."
 PENDING_BRANCHES=()

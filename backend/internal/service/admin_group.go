@@ -298,6 +298,10 @@ func defaultModelsListCandidateIDs(platform string) []string {
 		return DefaultOpenCodeGoModelIDs()
 	case PlatformOllamaCloud:
 		return DefaultOllamaCloudModelIDs()
+	case PlatformTypeSafe:
+		// 见 handler/gateway_handler.go 的 Models()：typesafe 只提供
+		// POST /v1/systemone，没有模型目录，也不得回落 claude.DefaultModels。
+		return nil
 	case PlatformComposite:
 		return compositeDefaultModelsListCandidateIDs()
 	default:

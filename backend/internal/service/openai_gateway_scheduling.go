@@ -290,11 +290,14 @@ func (s *OpenAIGatewayService) SelectAccountForTokenCount(
 // kimi 分组请求只命中 kimi 账号，语义与 openai/grok 一致。
 // Ollama Cloud 同样必须保留原值：归一为 openai 会让 ollama_cloud 分组去查
 // openai 候选桶，表现为静默空池。
+// typesafe 同样归一为自身：它只服务 /v1/systemone，但复用本调度入口
+// （handler 传平台覆写），若归一为 openai，它自己的账号会在
+// account.Platform != NormalizeOpenAICompatiblePlatform(req.Platform) 处被全部过滤。
 // （upstream 曾将本函数改为未导出 normalizeOpenAICompatiblePlatform，本分支的
 // handler 调度入口仍需导出，保持导出名。）
 func NormalizeOpenAICompatiblePlatform(platform string) string {
 	switch platform {
-	case PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformOpenCodeGo, PlatformOllamaCloud:
+	case PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformOpenCodeGo, PlatformOllamaCloud, PlatformTypeSafe:
 		return platform
 	default:
 		return PlatformOpenAI

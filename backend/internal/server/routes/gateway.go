@@ -46,9 +46,41 @@ func RegisterGatewayRoutes(
 	// 保证校验发生在合成路由改写与调度之前，且只看客户端书写的模型名。
 	groupModelAllowlist := middleware.GroupModelAllowlist()
 
+	// TypeSafe AI 的 Jev 判断题服务（POST /v1/systemone）只有 typesafe 分组可以访问。
+	// 刻意不复用 isOpenAIOnlyEndpointGatewayPlatform：后者要求
+	// group platform == PlatformOpenAI，会把 typesafe 分组全部挡在门外。
+	isTypeSafeGatewayPlatform := func(c *gin.Context) bool {
+		return getGroupPlatform(c) == service.PlatformTypeSafe
+	}
+	// typesafe 分组没有对话端点（/messages、/chat/completions、/responses、
+	// /messages/count_tokens），必须在这几个入口显式拒绝：通用 Anthropic 网关按
+	// platform 过滤后仍会选中 typesafe 账号，不拦就会落到通用网关/上游，拿到一个
+	// 语义不清的上游错误；这里改为干净的显式 404。曾经担心的「key 被当 Anthropic
+	// key 发到 https://api.anthropic.com」已不成立——(*Account).GetBaseURL() 现在
+	// 对 typesafe 早退返回空串，官方域名回落这条路已在 base URL 层关闭。
+	// 返回 true 表示已拒绝。
+	rejectTypeSafeConversationalEndpoint := func(c *gin.Context, apiName string) bool {
+		if !isTypeSafeGatewayPlatform(c) {
+			return false
+		}
+		service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalFeatureGate)
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": gin.H{
+				"type":    "not_found_error",
+				"message": apiName + " is not supported for TypeSafe groups; POST /v1/systemone is the only available endpoint",
+			},
+		})
+		return true
+	}
 	// 单目标与账号池统一走 dispatcher：池候选全属 OpenAI 兼容族进 OpenAI
 	// CountTokens，其余（跨族池 / 非兼容族单目标）落通用网关。
+	// 注意：不要在此定义 isOpenAIResponsesCompatibleGatewayPlatform 局部闭包——
+	// 一律使用下方包级函数（含 ollama_cloud 与 composite 账号池语义），
+	// 局部闭包会在作用域内遮蔽包级函数。
 	countTokensHandler := func(c *gin.Context) {
+		if rejectTypeSafeConversationalEndpoint(c, "Count Tokens API") {
+			return
+		}
 		dispatchOpenAICompatibleCountTokens(c, h.OpenAIGateway.CountTokens, h.OpenAIGateway.GrokCountTokens, h.Gateway.CountTokens)
 	}
 	codexModelsHandler := func(c *gin.Context) {
@@ -166,6 +198,15 @@ func RegisterGatewayRoutes(
 			next(c)
 		}
 	}
+	// GET /responses 是 Responses WebSocket ingress（同一处理器挂在 /v1、根路径别名
+	// 与 /backend-api/codex 三个入口）。typesafe 分组没有对话端点，必须与
+	// POST /responses 共用同一平台门在这里一并拒绝，而不是另写一套。
+	responsesWebSocketHandler := func(c *gin.Context) {
+		if rejectTypeSafeConversationalEndpoint(c, "Responses API") {
+			return
+		}
+		h.OpenAIGateway.ResponsesWebSocket(c)
+	}
 
 	// API网关（Claude API兼容）
 	gateway := r.Group("/v1")
@@ -181,6 +222,9 @@ func RegisterGatewayRoutes(
 	{
 		// /v1/messages: auto-route based on group platform
 		gateway.POST("/messages", func(c *gin.Context) {
+			if rejectTypeSafeConversationalEndpoint(c, "Messages API") {
+				return
+			}
 			dispatchOpenAICompatibleGateway(c, h.OpenAIGateway.Messages, h.Gateway.Messages)
 		})
 		// /v1/messages/count_tokens: OpenAI bridges upstream, Grok estimates
@@ -197,17 +241,24 @@ func RegisterGatewayRoutes(
 		gateway.GET("/live/:call_id", h.OpenAIGateway.LiveSideband)
 		// OpenAI Responses API: auto-route based on group platform
 		gateway.POST("/responses", func(c *gin.Context) {
+			if rejectTypeSafeConversationalEndpoint(c, "Responses API") {
+				return
+			}
 			dispatchOpenAICompatibleGateway(c, h.OpenAIGateway.Responses, h.Gateway.Responses)
 		})
 		gateway.POST("/responses/*subpath", guardResponsesSubpath(func(c *gin.Context) {
+			if rejectTypeSafeConversationalEndpoint(c, "Responses API") {
+				return
+			}
 			dispatchOpenAICompatibleGateway(c, h.OpenAIGateway.Responses, h.Gateway.Responses)
 		}))
 		gateway.POST("/alpha/search", textBodyLimit, h.OpenAIGateway.AlphaSearch)
-		gateway.GET("/responses", func(c *gin.Context) {
-			h.OpenAIGateway.ResponsesWebSocket(c)
-		})
+		gateway.GET("/responses", responsesWebSocketHandler)
 		// OpenAI Chat Completions API: auto-route based on group platform
 		gateway.POST("/chat/completions", func(c *gin.Context) {
+			if rejectTypeSafeConversationalEndpoint(c, "Chat Completions API") {
+				return
+			}
 			dispatchOpenAICompatibleGateway(c, h.OpenAIGateway.ChatCompletions, h.Gateway.ChatCompletions)
 		})
 		gateway.POST("/embeddings", textBodyLimit, func(c *gin.Context) {
@@ -237,6 +288,22 @@ func RegisterGatewayRoutes(
 				return
 			}
 			h.OpenAIGateway.Rerank(c)
+		})
+		// TypeSafe AI 的 Jev 判断题服务是非 OpenAI 兼容的原生透传端点
+		// （请求 {model,state,questions}，响应 {model,usage,answers}，无流式），
+		// 因此用独立的平台门：只有 typesafe 分组可以访问。
+		gateway.POST("/systemone", textBodyLimit, func(c *gin.Context) {
+			if !isTypeSafeGatewayPlatform(c) {
+				service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalFeatureGate)
+				c.JSON(http.StatusNotFound, gin.H{
+					"error": gin.H{
+						"type":    "not_found_error",
+						"message": "System One API is not supported for this platform",
+					},
+				})
+				return
+			}
+			h.OpenAIGateway.SystemOne(c)
 		})
 		gateway.POST("/images/generations", imagesHandler)
 		gateway.POST("/images/edits", imagesHandler)
@@ -341,6 +408,9 @@ func RegisterGatewayRoutes(
 
 	// OpenAI Responses API（不带v1前缀的别名）— auto-route based on group platform
 	responsesHandler := func(c *gin.Context) {
+		if rejectTypeSafeConversationalEndpoint(c, "Responses API") {
+			return
+		}
 		dispatchOpenAICompatibleGateway(c, h.OpenAIGateway.Responses, h.Gateway.Responses)
 	}
 	// 根路径别名共用中间件链：白名单准入在 apiKeyAuth 之后、compositeTarget
@@ -356,9 +426,7 @@ func RegisterGatewayRoutes(
 	rootRoute(http.MethodPost, "/responses", bodyLimit, responsesHandler)
 	rootRoute(http.MethodPost, "/responses/*subpath", bodyLimit, guardResponsesSubpath(responsesHandler))
 	rootRoute(http.MethodPost, "/alpha/search", textBodyLimit, h.OpenAIGateway.AlphaSearch)
-	rootRoute(http.MethodGet, "/responses", bodyLimit, func(c *gin.Context) {
-		h.OpenAIGateway.ResponsesWebSocket(c)
-	})
+	rootRoute(http.MethodGet, "/responses", bodyLimit, responsesWebSocketHandler)
 	rootRoute(http.MethodGet, "/models", bodyLimit, modelsHandler)
 	rootRoute(http.MethodGet, "/models/:model", bodyLimit, h.Gateway.Models)
 	rootRoute(http.MethodPost, "/messages/count_tokens", bodyLimit, countTokensHandler)
@@ -370,13 +438,14 @@ func RegisterGatewayRoutes(
 		codexDirect.POST("/responses", responsesHandler)
 		codexDirect.POST("/responses/*subpath", guardResponsesSubpath(responsesHandler))
 		codexDirect.POST("/alpha/search", textBodyLimit, h.OpenAIGateway.AlphaSearch)
-		codexDirect.GET("/responses", func(c *gin.Context) {
-			h.OpenAIGateway.ResponsesWebSocket(c)
-		})
+		codexDirect.GET("/responses", responsesWebSocketHandler)
 		codexDirect.GET("/models", codexModelsHandler)
 	}
 	// OpenAI Chat Completions API（不带v1前缀的别名）— auto-route based on group platform
 	rootRoute(http.MethodPost, "/chat/completions", bodyLimit, func(c *gin.Context) {
+		if rejectTypeSafeConversationalEndpoint(c, "Chat Completions API") {
+			return
+		}
 		dispatchOpenAICompatibleGateway(c, h.OpenAIGateway.ChatCompletions, h.Gateway.ChatCompletions)
 	})
 	rootRoute(http.MethodPost, "/embeddings", textBodyLimit, func(c *gin.Context) {

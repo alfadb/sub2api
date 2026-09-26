@@ -34,6 +34,7 @@ export const QUOTA_PLATFORMS = [
   "minimax",
   "opencode_go",
   "ollama_cloud",
+  "typesafe",
 ] as const
 
 export type PlatformType = (typeof QUOTA_PLATFORMS)[number]

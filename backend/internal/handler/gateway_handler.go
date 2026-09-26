@@ -1257,6 +1257,13 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 		writeGrokModelsList(c, xai.DefaultModelIDs())
 		return
 	}
+	// typesafe 只提供 POST /v1/systemone（Jev 判断题服务），没有模型目录：
+	// 显式返回空清单，绝不回落 claude.DefaultModels——那会把无关的 Claude
+	// 模型名当作可用模型回给客户端。
+	if platform == service.PlatformTypeSafe {
+		writeModelsList(c, platform, nil)
+		return
+	}
 
 	// ollama_cloud 账号侧清单缺失时回落实测默认目录（DefaultOllamaCloudModelIDs），
 	// 不得回落 Claude 默认模型。
@@ -1534,6 +1541,9 @@ func defaultModelIDsForPlatform(platform string) []string {
 		return service.DefaultOpenCodeGoModelIDs()
 	case service.PlatformOllamaCloud:
 		return service.DefaultOllamaCloudModelIDs()
+	case service.PlatformTypeSafe:
+		// 见 Models()：typesafe 只提供 /v1/systemone，没有模型目录。
+		return nil
 	case service.PlatformComposite:
 		ids := make([]string, 0)
 		seen := make(map[string]struct{})

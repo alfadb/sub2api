@@ -51,7 +51,9 @@ const (
 	PlatformOpenCodeGo = domain.PlatformOpenCodeGo
 	// PlatformOllamaCloud 是 Ollama Cloud 订阅制聚合上游。
 	PlatformOllamaCloud = domain.PlatformOllamaCloud
-	PlatformComposite   = domain.PlatformComposite
+	// PlatformTypeSafe 是 TypeSafe AI 的 Jev 判断题服务（非 OpenAI 兼容协议）。
+	PlatformTypeSafe  = domain.PlatformTypeSafe
+	PlatformComposite = domain.PlatformComposite
 	// PlatformKiro is retained for unsupported-platform threshold tests and legacy
 	// account rows. Scheduling-threshold evaluation never pauses kiro accounts.
 	PlatformKiro = "kiro"
@@ -92,6 +94,10 @@ const (
 	DefaultOpenCodeZenBaseURL = "https://opencode.ai/zen/v1"
 	// Ollama Cloud：Chat Completions / Responses 共用带 /v1 的基址。
 	DefaultOllamaCloudBaseURL = "https://ollama.com/v1"
+	// TypeSafe AI：Jev 判断题服务入口（POST /v1/systemone）。
+	DefaultTypeSafeBaseURL = "https://api.typesafe.ai"
+	// TypeSafe AI 没有模型目录，管理员测试连接在未指定 model_id 时用该模型探测。
+	DefaultTypeSafeTestModel = "jev-latest"
 )
 
 // 国产供应商 Anthropic 协议端点的默认 base_url（上游路径为 {base}/v1/messages）。
@@ -129,6 +135,13 @@ func IsOllamaCloud(platform string) bool {
 	return platform == PlatformOllamaCloud
 }
 
+// IsTypeSafe 报告 platform 是否为 TypeSafe AI 的 Jev 判断题服务。
+// 它不是 OpenAI 兼容协议，因此刻意不纳入 IsMultiProtocolAPIKeyProvider
+// （不参与 adaptive 协议分流）；仅作为 api_key + base_url 账号使用。
+func IsTypeSafe(platform string) bool {
+	return platform == PlatformTypeSafe
+}
+
 // IsMultiProtocolAPIKeyProvider 报告 platform 是否为多协议 API Key 网关
 // （国产供应商 + OpenCode + Ollama Cloud）：走 OpenAI 网关、支持 adaptive 协议分流。
 func IsMultiProtocolAPIKeyProvider(platform string) bool {
@@ -150,6 +163,7 @@ var AllowedQuotaPlatforms = []string{
 	PlatformMiniMax,
 	PlatformOpenCodeGo,
 	PlatformOllamaCloud,
+	PlatformTypeSafe,
 }
 
 // AllowedSchedulingThresholdPlatforms 是允许设置账号自动停调阈值的平台列表。

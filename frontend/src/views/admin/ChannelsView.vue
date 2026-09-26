@@ -763,9 +763,10 @@ const form = reactive({
 let abortController: AbortController | null = null
 
 // ── Platform config ──
-const platformOrder: GroupPlatform[] = ['anthropic', 'openai', 'gemini', 'antigravity', 'grok', 'kimi', 'zhipu', 'deepseek', 'minimax', 'opencode_go', 'ollama_cloud']
+const platformOrder: GroupPlatform[] = ['anthropic', 'openai', 'gemini', 'antigravity', 'grok', 'kimi', 'zhipu', 'deepseek', 'minimax', 'opencode_go', 'ollama_cloud', 'typesafe']
 // Composite pricing/mapping may target every concrete schedulable provider.
 // (Backend isConcreteRequestPlatform includes ollama_cloud.)
+// 注意：不含 typesafe —— 后端 composite 白名单不接受它（只有 POST /v1/systemone，不是可路由的对话上游）。
 const compositePlatforms: GroupPlatform[] = ['anthropic', 'openai', 'gemini', 'antigravity', 'grok', 'kimi', 'zhipu', 'deepseek', 'minimax', 'opencode_go', 'ollama_cloud']
 
 // ── Helpers ──

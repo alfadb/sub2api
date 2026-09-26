@@ -35,6 +35,7 @@ func TestEveryGatewayPOSTRouteIsClassifiedForPromptAuditCoverage(t *testing.T) {
 		"/embeddings":               {"openai_embeddings.go"},
 		"/rerank":                   {"openai_rerank.go"},
 		"/alpha/search":             {"openai_alpha_search.go"},
+		"/systemone":                {"openai_systemone.go"},
 		"/live":                     {"openai_live.go"},
 		"/realtime/calls":           {"openai_live.go"},
 		"/images/generations":       {"openai_images.go", "grok_media.go"},

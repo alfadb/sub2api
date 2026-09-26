@@ -1255,6 +1255,7 @@ function generateRoutedCodexFiles(
     minimax: 'MiniMax',
     opencode_go: 'OpenCode',
     ollama_cloud: 'Ollama Cloud',
+    typesafe: 'TypeSafe',
     composite: 'Composite'
   }
   const label = labels[platform]

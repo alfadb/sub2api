@@ -21,7 +21,8 @@ export const CONCRETE_PLATFORM_OPTIONS = [
   { value: 'deepseek', label: 'DeepSeek' },
   { value: 'minimax', label: 'MiniMax' },
   { value: 'opencode_go', label: 'OpenCode' },
-  { value: 'ollama_cloud', label: 'Ollama Cloud' }
+  { value: 'ollama_cloud', label: 'Ollama Cloud' },
+  { value: 'typesafe', label: 'TypeSafe' }
 ] as const satisfies readonly PlatformOption<AccountPlatform>[]
 
 /** Platforms that can own a group. */

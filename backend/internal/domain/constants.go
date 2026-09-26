@@ -33,7 +33,10 @@ const (
 	PlatformOpenCodeGo = "opencode_go"
 	// PlatformOllamaCloud 是 Ollama Cloud 订阅制聚合上游（多协议 API Key 网关）。
 	PlatformOllamaCloud = "ollama_cloud"
-	PlatformComposite   = "composite"
+	// PlatformTypeSafe 是 TypeSafe AI 的 Jev 判断题服务（POST /v1/systemone），
+	// 非 OpenAI 兼容协议：账号凭据为 base_url + api_key，但不经 OpenAI 网关转发。
+	PlatformTypeSafe  = "typesafe"
+	PlatformComposite = "composite"
 )
 
 // Account mode constants 区分国产供应商的「按量付费（余额）」与「Coding Plan」两种接入方式。

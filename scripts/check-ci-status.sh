@@ -17,6 +17,8 @@ set -euo pipefail
 #   选项:
 #     --wait            轮询模式（默认单次）
 #     --ref <name>      限定 GitLab pipeline 的 ref（如 integration 或 v0.9.x）
+#     --only <side>     只查一端：github 或 gitlab（tag 仅推 priv，GitHub 无 run，
+#                       查 tag 发布流水线用 --only gitlab）
 #     --max-minutes <n> 轮询上限，默认 40 分钟（保险丝，不是验收路径）
 #     --interval <sec>  轮询间隔，默认 60 秒
 #   SHA 缺省 = 本地 integration 分支 tip
@@ -26,6 +28,7 @@ set -euo pipefail
 
 WAIT=0
 GL_REF=""
+ONLY=""
 MAX_MINUTES=40
 INTERVAL=60
 SHA=""
@@ -33,6 +36,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --wait) WAIT=1 ;;
         --ref) GL_REF="${2:?--ref needs a value}"; shift ;;
+        --only) ONLY="${2:?--only needs github or gitlab}"; shift ;;
         --max-minutes) MAX_MINUTES="${2:?--max-minutes needs a value}"; shift ;;
         --interval) INTERVAL="${2:?--interval needs a value}"; shift ;;
         -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
@@ -40,6 +44,10 @@ while [ $# -gt 0 ]; do
     esac
     shift
 done
+case "$ONLY" in
+    github|gitlab|"") : ;;
+    *) echo "❌ --only 只接受 github 或 gitlab" >&2; exit 3 ;;
+esac
 
 # SHA 缺省取本地 integration tip；统一解析成完整 40 位，避免前缀歧义
 [ -n "$SHA" ] || SHA="integration"
@@ -75,47 +83,55 @@ gl_pipeline_list() {
 
 check_once() {
     # 打印状态明细；设置全局 GH_OK/GL_OK（1=全部终态 success）与 ANY_FAIL（1=存在终态失败）
+    # --only 时跳过未请求的一端（视为满足）
     local failed=0 gh_out gl_out
     ANY_FAIL=0
 
-    if ! gh_out=$(gh_run_list); then
-        echo "❌ GitHub Actions 查询失败（gh api 报错）" >&2; return 3
-    fi
-    if ! gl_out=$(gl_pipeline_list); then
-        echo "❌ GitLab 查询失败（glab api 报错）" >&2; return 3
+    if [ "$ONLY" != "gitlab" ]; then
+        if ! gh_out=$(gh_run_list); then
+            echo "❌ GitHub Actions 查询失败（gh api 报错）" >&2; return 3
+        fi
+        echo "── GitHub Actions (${GH_SLUG}) @ ${SHORT_SHA}"
+        GH_OK=1
+        if [ -z "$gh_out" ]; then
+            echo "   （无任何 run —— 视为未就绪）"
+            GH_OK=0
+        else
+            while IFS=$'\t' read -r name status conclusion; do
+                local mark="⏳"
+                [ "$status" = "completed" ] || GH_OK=0
+                if [ "$status" = "completed" ]; then
+                    if [ "$conclusion" = "success" ]; then mark="✅"; else mark="❌ ${conclusion}"; GH_OK=0; ANY_FAIL=1; fi
+                fi
+                echo "   ${mark} ${name}: ${status}/${conclusion}"
+            done <<<"$gh_out"
+        fi
+    else
+        GH_OK=1
     fi
 
-    echo "── GitHub Actions (${GH_SLUG}) @ ${SHORT_SHA}"
-    GH_OK=1
-    if [ -z "$gh_out" ]; then
-        echo "   （无任何 run —— 视为未就绪）"
-        GH_OK=0
+    if [ "$ONLY" != "github" ]; then
+        if ! gl_out=$(gl_pipeline_list); then
+            echo "❌ GitLab 查询失败（glab api 报错）" >&2; return 3
+        fi
+        echo "── GitLab (${GL_PATH}) @ ${SHORT_SHA}${GL_REF:+ (ref=${GL_REF})}"
+        GL_OK=1
+        if [ -z "$gl_out" ]; then
+            echo "   （无 pipeline —— 视为未就绪）"
+            GL_OK=0
+        else
+            while IFS=$'\t' read -r pid ref status; do
+                local mark="⏳"
+                case "$status" in
+                    success) mark="✅" ;;
+                    failed|canceled|skipped) mark="❌ ${status}"; GL_OK=0; ANY_FAIL=1 ;;
+                    *) GL_OK=0 ;;
+                esac
+                echo "   ${mark} #${pid} ${ref}: ${status}"
+            done <<<"$gl_out"
+        fi
     else
-        while IFS=$'\t' read -r name status conclusion; do
-            local mark="⏳"
-            [ "$status" = "completed" ] || GH_OK=0
-            if [ "$status" = "completed" ]; then
-                if [ "$conclusion" = "success" ]; then mark="✅"; else mark="❌ ${conclusion}"; GH_OK=0; ANY_FAIL=1; fi
-            fi
-            echo "   ${mark} ${name}: ${status}/${conclusion}"
-        done <<<"$gh_out"
-    fi
-
-    echo "── GitLab (${GL_PATH}) @ ${SHORT_SHA}${GL_REF:+ (ref=${GL_REF})}"
-    GL_OK=1
-    if [ -z "$gl_out" ]; then
-        echo "   （无 pipeline —— 视为未就绪）"
-        GL_OK=0
-    else
-        while IFS=$'\t' read -r pid ref status; do
-            local mark="⏳"
-            case "$status" in
-                success) mark="✅" ;;
-                failed|canceled|skipped) mark="❌ ${status}"; GL_OK=0; ANY_FAIL=1 ;;
-                *) GL_OK=0 ;;
-            esac
-            echo "   ${mark} #${pid} ${ref}: ${status}"
-        done <<<"$gl_out"
+        GL_OK=1
     fi
     return 0
 }

@@ -85,6 +85,8 @@ func (s *AccountTestService) testCNProviderAdaptiveAnthropicConnection(c *gin.Co
 	// base_url 强制 Bearer，其余保持 extra/default 行为。
 	setAnthropicAPIKeyAuthHeader(req.Header, account, authToken, account.GetCNProtocolBaseURL(APIProtocolAnthropic))
 	applyOpenCodeUpstreamUserAgent(account, apiURL, req.Header)
+	// zhipu 探测同样按 ZCode Desktop 客户端身份出站（非 zhipu 账号 no-op）。
+	applyZCodeIdentityHeaders(req.Header, account, zcodeIdentityAnthropic)
 	account.ApplyHeaderOverrides(req.Header)
 	applyOpenCodeSessionHeader(c, account, apiURL, req.Header, payloadBytes)
 
@@ -273,6 +275,8 @@ func (s *AccountTestService) testCNProviderAnthropicConnection(c *gin.Context, a
 	// extra/default 行为。
 	setAnthropicAPIKeyAuthHeader(req.Header, account, authToken, account.GetAnthropicProtocolBaseURL())
 	applyOpenCodeUpstreamUserAgent(account, apiURL, req.Header)
+	// zhipu 探测同样按 ZCode Desktop 客户端身份出站（非 zhipu 账号 no-op）。
+	applyZCodeIdentityHeaders(req.Header, account, zcodeIdentityAnthropic)
 	account.ApplyHeaderOverrides(req.Header)
 	applyOpenCodeSessionHeader(c, account, apiURL, req.Header, payloadBytes)
 

@@ -82,6 +82,11 @@ package:
       # upstream go.mod that may be out of sync with actual imports.
       sed -i '/^COPY backend\/ \.\//a RUN go mod tidy' Dockerfile
 
+      # Use BuildKit's built-in Dockerfile frontend: since the 2026-10-05 rebuild of
+      # devel/buildkit:rootless, launching the external docker/dockerfile:1.7
+      # frontend container exits 1 on the rootless runner.
+      sed -i '1{/^# syntax=/d}' Dockerfile
+
       buildctl-daemonless.sh build \
         --frontend dockerfile.v0 \
         --local context=. \

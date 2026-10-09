@@ -1216,7 +1216,14 @@ func (s *PricingService) GetModelPricing(modelName string) *LiteLLMModelPricing 
 	}
 
 	// 5. OpenAI 模型回退策略
-	if strings.HasPrefix(lookupCandidates[0], "gpt-") {
+	// gpt-oss:<tag> 是开放权重模型（ollama cloud 等托管），不属于 OpenAI 模型家族：
+	// 不进本回退链 —— 否则 matchOpenAIModel 的末端 catch-all 会把它落到
+	// DefaultTestModel("gpt-5.4") 的价卡（$2.5/$15 per MTok）上静默误计。
+	// 返回 nil 交还 BillingService 走 fallbackPrices 的 ollama 专属价卡。
+	// 排除收窄到带 ":tag" 的 gpt-oss 系列（ollama 命名形态，含 gpt-oss-safeguard:20b
+	// 等变体）；无 tag 的连字符形态如 Antigravity 的 "gpt-oss-120b-medium" 不在排除内，
+	// 保持进 OpenAI 链的既有行为。
+	if strings.HasPrefix(lookupCandidates[0], "gpt-") && !isTaggedGPTOSSModel(lookupCandidates[0]) {
 		return s.matchOpenAIModel(lookupCandidates[0])
 	}
 
@@ -1735,4 +1742,9 @@ func isNumeric(s string) bool {
 		}
 	}
 	return true
+}
+
+// isTaggedGPTOSSModel 报告模型名是否为带 ":tag" 的 gpt-oss 开放权重模型（ollama 命名）。
+func isTaggedGPTOSSModel(model string) bool {
+	return strings.HasPrefix(model, "gpt-oss") && strings.Contains(model, ":")
 }

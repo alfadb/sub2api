@@ -259,6 +259,7 @@ export const GROK_BASE_URL_PRESETS: GrokBaseUrlPreset[] = [
 
 export type CnAccountMode = 'payg' | 'coding'
 export type OpenCodeAccountMode = 'zen' | 'go'
+export type OllamaCloudAccountMode = 'ollama_legacy' | 'ollama_credits'
 export type CnProviderPlatform = 'kimi' | 'zhipu' | 'deepseek' | 'minimax'
 
 /** adaptive 按入站协议（或按模型规则）选择原生端点。 */
@@ -312,6 +313,10 @@ export function providerModeLabel(mode: string, t: (key: string) => string): str
       return t('admin.accounts.opencodeGo.accountMode.zen')
     case 'go':
       return t('admin.accounts.opencodeGo.accountMode.go')
+    case 'ollama_legacy':
+      return t('admin.accounts.ollamaCloud.accountMode.legacy')
+    case 'ollama_credits':
+      return t('admin.accounts.ollamaCloud.accountMode.credits')
     default:
       return mode
   }
@@ -339,6 +344,11 @@ export const OPENCODE_GO_BASE_URL = builtinModeBaseUrl('opencode_go', 'go', 'cha
 export const OPENCODE_GO_ANTHROPIC_BASE_URL = builtinModeBaseUrl('opencode_go', 'go', 'anthropic')
 export const OPENCODE_ZEN_BASE_URL = builtinModeBaseUrl('opencode_go', 'zen', 'chat_completions')
 export const OPENCODE_ZEN_ANTHROPIC_BASE_URL = builtinModeBaseUrl('opencode_go', 'zen', 'anthropic')
+
+// Ollama Cloud 默认端点（平台清单，与后端 provider profile 同源）。anthropic 档不带 /v1：
+// 后端按协议拼接 /v1/messages。
+export const OLLAMA_BASE_URL = builtinModeBaseUrl('ollama_cloud', 'ollama_legacy', 'chat_completions')
+export const OLLAMA_ANTHROPIC_BASE_URL = builtinModeBaseUrl('ollama_cloud', 'ollama_legacy', 'anthropic')
 
 export function isOpenCodeGoPlatform(platform: string): boolean {
   return platform === 'opencode_go'

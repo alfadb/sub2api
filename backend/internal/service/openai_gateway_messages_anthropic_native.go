@@ -100,6 +100,12 @@ func (s *OpenAIGatewayService) forwardAnthropicViaNativeAnthropicEndpoint(
 		return nil, err
 	}
 
+	// adaptive/anthropic 协议账号的真实出站端点是供应商原生 /v1/messages（非
+	// Responses）。发送前记录实际端点与最终映射模型，404/500 等失败没有
+	// OpenAIForwardResult 时错误日志仍能报告真实值。
+	SetOpsUpstreamEndpoint(c, "/v1/messages")
+	SetOpsUpstreamModel(c, upstreamModel)
+
 	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 	if err != nil {
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, true)
@@ -140,7 +146,9 @@ func (s *OpenAIGatewayService) nativeAnthropicTargetURL(account *Account) (strin
 // 连接测试共用。按模型分流的聚合平台（OpenCode、Command Code 等）的基址可能沿用带 /v1
 // 的 Chat Completions 基址，用版本感知拼接避免 /v1/v1/messages；其余供应商朴素拼接。
 func nativeAnthropicMessagesURL(account *Account, validatedBaseURL string) string {
-	if account.routesByModel() {
+	// 版本感知拼接：base 已带 /v1 时不再追加，避免拼出 /v1/v1/messages（按模型分流平台的
+	// Chat Completions base 带 /v1；Ollama Cloud 的 anthropic 默认 base 不带，自定义可能带）。
+	if account.routesByModel() || account.IsOllamaCloud() {
 		return buildOpenAIEndpointURL(validatedBaseURL, "/v1/messages")
 	}
 	return strings.TrimRight(validatedBaseURL, "/") + "/v1/messages"
@@ -179,6 +187,13 @@ func (s *OpenAIGatewayService) buildNativeAnthropicUpstreamRequest(
 	// 的 base 取值同源（GetAnthropicProtocolBaseURL，adaptive 时是 Anthropic 协议
 	// 地址而非 CC/Responses 地址），详见 helper 注释。
 	body = clampOllamaCloudAnthropicMessagesMaxTokens(account, account.GetAnthropicProtocolBaseURL(), body)
+
+	// Ollama Cloud 请求期定价预检（api_protocol=anthropic 的独立构造器，覆盖
+	// messages / responses / chat_completions 三条 anthropic 原生直通入站）：未定价
+	// 模型在任何上游 I/O 之前显式 400，且 400 已由 helper 写出。
+	if err := s.enforceOllamaCloudRequestPricingPreflight(ctx, c, account, body); err != nil {
+		return nil, nil, err
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {

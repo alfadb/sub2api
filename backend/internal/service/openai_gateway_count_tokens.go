@@ -271,6 +271,8 @@ func (s *OpenAIGatewayService) ForwardCountTokensAsAnthropic(
 	// count_tokens 为 "Anthropic only"，Kimi/智谱亦无任何文档承诺。转发上游
 	// 只会常态 404，且错误还会流入账号处置逻辑误伤整账号调度；Claude Code
 	// 高频调用此端点，本地 tiktoken 估算是与 Grok 一致的既有方案。
+	// Ollama Cloud 同因：其 Anthropic 兼容层同样未提供该端点（上游只有
+	// /v1/responses/input_tokens），转发同样只会得到 404。
 	if account.IsMultiProtocolAPIKey() {
 		estimated, err := estimateAnthropicCountTokensLocally(body)
 		if err != nil {

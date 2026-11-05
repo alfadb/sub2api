@@ -104,6 +104,27 @@ deploy:
   rules:
     - if: $CI_COMMIT_TAG
   script:
-    - kubectl -n dev patch deployment sub2api --type=strategic -p '{"spec":{"strategy":{"type":"RollingUpdate","rollingUpdate":{"maxSurge":1,"maxUnavailable":0}}}}'
-    - kubectl -n dev patch deployment sub2api --type=strategic -p "{\"spec\":{\"template\":{\"spec\":{\"terminationGracePeriodSeconds\":60,\"containers\":[{\"name\":\"sub2api\",\"image\":\"hub.alfadb.cn/devel/sub2api:${CI_COMMIT_TAG}\",\"lifecycle\":{\"preStop\":{\"exec\":{\"command\":[\"sh\",\"-c\",\"sleep 5\"]}}}}]}}}}"
+    - kubectl -n dev patch deployment sub2api --type=strategic -p '{"spec":{"strategy":{"type":"Recreate"}}}'
+    - kubectl -n dev patch deployment sub2api --type=strategic -p "{\"spec\":{\"template\":{\"spec\":{\"terminationGracePeriodSeconds\":60,\"containers\":[{\"name\":\"sub2api\",\"image\":\"hub.alfadb.cn/devel/sub2api:${CI_COMMIT_TAG}\",\"lifecycle\":null}]}}}}"
+    - kubectl -n dev rollout status deployment/sub2api --timeout=300s
+
+# ── 一次性恢复（manual） ──
+# 背景：v0.9.367 tag 流水线用 RollingUpdate 部署时，被 ZFS-LocalPV 单挂载
+# （同一 RWO 卷第二个 Pod 报 verifyMount: device already mounted）卡住：
+# 新 Pod 长期 ContainerCreating，旧 Pod 仍在服务，deployment 超 progress deadline。
+# 恢复步骤：rollout undo 把模板退回上一修订 → 控制器删除卡住的 Pod、保留旧 Pod，
+# rollout 收敛；然后切回 Recreate + 模板 patch 完成 v0.9.367 上线。
+deploy-recover:
+  stage: deploy
+  image: hub.alfadb.cn/builder/bitnami/kubectl:latest
+  rules:
+    - if: $CI_COMMIT_BRANCH == "integration"
+      when: manual
+  variables:
+    RECOVER_IMAGE: "hub.alfadb.cn/devel/sub2api:v0.9.367"
+  script:
+    - kubectl -n dev rollout undo deployment/sub2api || true
+    - kubectl -n dev rollout status deployment/sub2api --timeout=120s || true
+    - kubectl -n dev patch deployment sub2api --type=strategic -p '{"spec":{"strategy":{"type":"Recreate"}}}'
+    - kubectl -n dev patch deployment sub2api --type=strategic -p "{\"spec\":{\"template\":{\"spec\":{\"terminationGracePeriodSeconds\":60,\"containers\":[{\"name\":\"sub2api\",\"image\":\"$RECOVER_IMAGE\",\"lifecycle\":null}]}}}}"
     - kubectl -n dev rollout status deployment/sub2api --timeout=300s

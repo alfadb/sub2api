@@ -104,7 +104,10 @@ deploy:
   rules:
     - if: $CI_COMMIT_TAG
   script:
-    - kubectl -n dev patch deployment sub2api --type=strategic -p '{"spec":{"strategy":{"type":"Recreate"}}}'
+    # 用 JSON patch 整体替换 /spec/strategy：strategic merge patch 是 map 合并，
+    # 只写 {"strategy":{"type":"Recreate"}} 会残留 rollingUpdate 字段，被 API
+    # 校验拒绝（may not be specified when strategy type is 'Recreate'），整个 patch 失败。
+    - kubectl -n dev patch deployment sub2api --type=json -p '[{"op":"replace","path":"/spec/strategy","value":{"type":"Recreate"}}]'
     - kubectl -n dev patch deployment sub2api --type=strategic -p "{\"spec\":{\"template\":{\"spec\":{\"terminationGracePeriodSeconds\":60,\"containers\":[{\"name\":\"sub2api\",\"image\":\"hub.alfadb.cn/devel/sub2api:${CI_COMMIT_TAG}\",\"lifecycle\":null}]}}}}"
     - kubectl -n dev rollout status deployment/sub2api --timeout=300s
 
@@ -112,19 +115,21 @@ deploy:
 # 背景：v0.9.367 tag 流水线用 RollingUpdate 部署时，被 ZFS-LocalPV 单挂载
 # （同一 RWO 卷第二个 Pod 报 verifyMount: device already mounted）卡住：
 # 新 Pod 长期 ContainerCreating，旧 Pod 仍在服务，deployment 超 progress deadline。
-# 恢复步骤：rollout undo 把模板退回上一修订 → 控制器删除卡住的 Pod、保留旧 Pod，
-# rollout 收敛；然后切回 Recreate + 模板 patch 完成 v0.9.367 上线。
+# 卡住的 Pod 与旧修订已清理（deployment 已回到 v0.9.366），本作业只做三步：
+# 切 Recreate → patch 模板到 RECOVER_IMAGE → 等 rollout 收敛。
+# 不再做 rollout undo：卡住的 Pod 已清除，undo 会翻回旧修订并再次踩同一挂载限制。
+# allow_failure: true —— 这是手动兜底作业，不能让 integration pipeline 终态卡在
+# manual（发版门禁要求精确 SHA 全部 success）。
 deploy-recover:
   stage: deploy
   image: hub.alfadb.cn/builder/bitnami/kubectl:latest
   rules:
     - if: $CI_COMMIT_BRANCH == "integration"
       when: manual
+  allow_failure: true
   variables:
     RECOVER_IMAGE: "hub.alfadb.cn/devel/sub2api:v0.9.367"
   script:
-    - kubectl -n dev rollout undo deployment/sub2api || true
-    - kubectl -n dev rollout status deployment/sub2api --timeout=120s || true
-    - kubectl -n dev patch deployment sub2api --type=strategic -p '{"spec":{"strategy":{"type":"Recreate"}}}'
+    - kubectl -n dev patch deployment sub2api --type=json -p '[{"op":"replace","path":"/spec/strategy","value":{"type":"Recreate"}}]'
     - kubectl -n dev patch deployment sub2api --type=strategic -p "{\"spec\":{\"template\":{\"spec\":{\"terminationGracePeriodSeconds\":60,\"containers\":[{\"name\":\"sub2api\",\"image\":\"$RECOVER_IMAGE\",\"lifecycle\":null}]}}}}"
     - kubectl -n dev rollout status deployment/sub2api --timeout=300s

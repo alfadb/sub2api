@@ -231,6 +231,15 @@ type OpenAIUsage struct {
 	CacheCreation12hInputTokens int `json:"cache_creation_12h_input_tokens,omitempty"`
 	CacheReadInputTokens        int `json:"cache_read_input_tokens,omitempty"`
 	ImageOutputTokens           int `json:"image_output_tokens,omitempty"`
+	// ServerToolUseCalls 是 DeepSeek usage.server_tool_use 的按次计费工具调用数
+	// （tool_search + tool_fetch + tool_image_search 合计，各 ¥5/千次；
+	// web_search_requests / web_fetch_requests 仅展示不计费；全为 0 时上游省略
+	// 整个字段）。复用 SearchCount 的按次计费通道（CalculateSearchCost）。
+	ServerToolUseCalls int
+	// SafetyTokens 是审核产生的 token 明细（output_tokens_details /
+	// completion_tokens_details.safety_tokens）。按输出 token 计费且已含在
+	// OutputTokens 中，仅保留展示，不重复计费。
+	SafetyTokens int
 }
 
 // OpenAIForwardResult represents the result of forwarding

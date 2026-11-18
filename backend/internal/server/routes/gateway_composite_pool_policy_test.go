@@ -162,6 +162,14 @@ func (c *stickyMemoryGatewayCache) GetReasoningContent(context.Context, string) 
 	return "", nil
 }
 
+func (c *stickyMemoryGatewayCache) SetAnthropicFileOwner(context.Context, string, int64, int64, string, time.Duration) error {
+	return nil
+}
+
+func (c *stickyMemoryGatewayCache) GetAnthropicFileOwner(context.Context, string) (int64, int64, string, bool, error) {
+	return 0, 0, "", false, nil
+}
+
 type poolPolicyCapturedRequest struct {
 	accountID int64
 	host      string

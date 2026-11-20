@@ -44,8 +44,7 @@ func (s *OpenAIGatewayService) forwardAnthropicViaNativeAnthropicEndpoint(
 
 	originalModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
 	if originalModel == "" {
-		writeAnthropicError(c, http.StatusBadRequest, "invalid_request_error", "model is required")
-		return nil, fmt.Errorf("missing model in request")
+		return nil, rejectGatewayRequest(c, writeAnthropicError, "model is required", fmt.Errorf("missing model in request"))
 	}
 	clientStream := gjson.GetBytes(body, "stream").Bool()
 
@@ -73,9 +72,9 @@ func (s *OpenAIGatewayService) forwardAnthropicViaNativeAnthropicEndpoint(
 	)
 
 	// 与 Anthropic 平台 passthrough 相同的 pre-filter：剥离空文本块与上游
-	// 无法接受的 web-search 历史块（GLM/Kimi/DeepSeek 对 server_tool_use 400）。
+	// 无法接受的 web-search 历史块。
 	body = StripEmptyTextBlocks(body)
-	body = FilterWebSearchHistoryBlocks(body, upstreamModel)
+	body = FilterWebSearchHistoryBlocks(body, upstreamModel, account)
 
 	logger.LegacyPrintf("service.gateway", "[CN Anthropic 直通] account=%d(%s) platform=%s model=%s upstream=%s stream=%v",
 		account.ID, account.Name, account.Platform, originalModel, upstreamModel, clientStream)

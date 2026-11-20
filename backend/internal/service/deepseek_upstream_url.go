@@ -1,52 +1,12 @@
 package service
 
 import (
+	"crypto/sha256"
 	"fmt"
-	"sort"
+	"net"
+	"net/url"
 	"strings"
 )
-
-// deepseekToolsEndpoints 列出 DeepSeek 独立工具接口支持的 endpoint 白名单。
-// 与上游约定：search/fetch/ocr/asr/tts 挂在 /v1/tools/ 下，files 系列挂在
-// /v1/files 下。
-var deepseekToolsEndpoints = map[string]bool{
-	"search":       true,
-	"fetch":        true,
-	"ocr":          true,
-	"asr":          true,
-	"tts":          true,
-	"files_create": true,
-	"files_list":   true,
-	"files_get":    true,
-	"files_delete": true,
-}
-
-// deepseekDefaultToolsBaseURL 返回 provider profile 里 DeepSeek 的默认 base_url，
-// 取不到时兜底官方常量。
-func deepseekDefaultToolsBaseURL() string {
-	profile := LookupProviderProfile(PlatformDeepseek)
-	if profile == nil {
-		return DefaultDeepseekBaseURL
-	}
-	modes := make([]string, 0, len(profile.Modes))
-	for mode := range profile.Modes {
-		modes = append(modes, mode)
-	}
-	sort.Strings(modes)
-	for _, mode := range modes {
-		if base := strings.TrimSpace(profile.Modes[mode].BaseURLs[APIProtocolChatCompletions]); base != "" {
-			return base
-		}
-	}
-	return DefaultDeepseekBaseURL
-}
-
-// normalizeDeepseekBaseURL 去掉尾斜杠与已带的 /v1 后缀，统一交由下方拼接补回
-// /v1，避免 base_url 含 /v1 时拼出 /v1/v1。
-func normalizeDeepseekBaseURL(raw string) string {
-	base := strings.TrimRight(strings.TrimSpace(raw), "/")
-	return strings.TrimSuffix(base, "/v1")
-}
 
 // isValidDeepseekFileID 校验 fileID 是否落在闭集 [A-Za-z0-9_-]，防路径注入。
 func isValidDeepseekFileID(fileID string) bool {
@@ -64,77 +24,107 @@ func isValidDeepseekFileID(fileID string) bool {
 	return true
 }
 
-// buildDeepseekFilesAnthropicURL 构造 Anthropic 兼容 Files API 的上游 URL：
-// {anthropic_base}/v1/files[/{fileID}]。请求带 anthropic-beta：
-// files-api-2025-04-14 头时使用——官方该端点免 purpose 且返回 Anthropic
-// 形状（type/size_bytes/mime_type/字符串 created_at），与 OpenAI 兼容
-// /v1/files 强制 purpose + OpenAI 形状不同。base 优先取分协议
-// api_base_urls.anthropic（官方默认 https://api.deepseek.com/anthropic），
-// 缺失时回落单值 base_url，tools 系列不受本函数影响。
-func buildDeepseekFilesAnthropicURL(account *Account, endpoint string, fileID string) (string, error) {
-	switch endpoint {
-	case "files_create", "files_list", "files_get", "files_delete":
-	default:
-		return "", fmt.Errorf("endpoint %s does not support anthropic files url", endpoint)
+// Select the same configured origin as chat traffic for the requested
+// protocol. An implicit adaptive Anthropic profile default could point to a
+// different host than the account's custom Chat Completions endpoint.
+func deepseekToolsBase(account *Account, anthropic bool) (base string, deriveAnthropic bool) {
+	if account == nil {
+		return "", false
 	}
-	base := ""
-	if account != nil {
-		base = strings.TrimSpace(account.GetAnthropicProtocolBaseURL())
-		if base == "" {
-			base = account.GetCredential("base_url")
+	explicit := strings.TrimSpace(account.GetCredential("base_url"))
+	bases, _ := account.Credentials["api_base_urls"].(map[string]any)
+	if account.IsAdaptiveAPIProtocol() {
+		if anthropic {
+			if value, _ := bases[APIProtocolAnthropic].(string); strings.TrimSpace(value) != "" {
+				return strings.TrimSpace(value), false
+			}
+		}
+		if value, _ := bases[APIProtocolChatCompletions].(string); strings.TrimSpace(value) != "" {
+			explicit = strings.TrimSpace(value)
 		}
 	}
-	if strings.TrimSpace(base) == "" {
-		base = deepseekDefaultToolsBaseURL()
+	if explicit != "" {
+		return explicit, anthropic && !account.IsAnthropicProtocol()
 	}
-	base = normalizeDeepseekBaseURL(base)
-	if base == "" {
-		return "", fmt.Errorf("deepseek base URL is required")
-	}
-	switch endpoint {
-	case "files_create", "files_list":
-		return base + "/v1/files", nil
-	default:
-		fileID = strings.TrimSpace(fileID)
-		if !isValidDeepseekFileID(fileID) {
-			// 不回显原始输入，避免把它写进日志与错误响应。
-			return "", fmt.Errorf("invalid file id for deepseek tools url path")
+	// An implicit profile default is safe only when the credentials contain
+	// no third-party origin. Sparse adaptive profiles are valid API inputs.
+	for _, value := range bases {
+		if configured, ok := value.(string); ok && strings.TrimSpace(configured) != "" && !isDeepseekOfficialHost(configured) {
+			return "", false
 		}
-		return base + "/v1/files/" + fileID, nil
 	}
+	if account.IsAnthropicProtocol() {
+		return account.GetAnthropicProtocolBaseURL(), false
+	}
+	return account.GetOpenAIBaseURL(), anthropic
 }
 
-// buildDeepseekToolsURL 构造 DeepSeek 独立工具接口的上游 URL。
-// base_url 取自账号 credentials，为空时回退 provider profile 默认值；
-// endpoint 必须在白名单内，fileID 仅在 files_get/files_delete 时必填且需通过
-// 字符白名单校验。
-func buildDeepseekToolsURL(account *Account, endpoint string, fileID string) (string, error) {
-	if !deepseekToolsEndpoints[endpoint] {
-		return "", fmt.Errorf("unsupported deepseek tools endpoint: %s", endpoint)
-	}
-	base := ""
-	if account != nil {
-		base = account.GetCredential("base_url")
-	}
-	if strings.TrimSpace(base) == "" {
-		base = deepseekDefaultToolsBaseURL()
-	}
-	base = normalizeDeepseekBaseURL(base)
-	if base == "" {
-		return "", fmt.Errorf("deepseek base URL is required")
-	}
-
-	switch endpoint {
-	case "files_create", "files_list":
-		return base + "/v1/files", nil
-	case "files_get", "files_delete":
-		fileID = strings.TrimSpace(fileID)
-		if !isValidDeepseekFileID(fileID) {
-			// 不回显原始输入，避免把它写进日志与错误响应。
-			return "", fmt.Errorf("invalid file id for deepseek tools url path")
+// Compare the storage namespace, including a relay's path prefix and configured
+// routing query, without storing credentials embedded in that query.
+func deepseekStorageOrigin(u *url.URL) string {
+	path := strings.TrimRight(u.EscapedPath(), "/")
+	if i := strings.LastIndex(path, "/files/"); i >= 0 && !strings.Contains(path[i+7:], "/") {
+		path = path[:i]
+	} else {
+		for _, suffix := range []string{"/chat/completions", "/responses", "/messages", "/files"} {
+			if strings.HasSuffix(path, suffix) {
+				path = strings.TrimSuffix(path, suffix)
+				break
+			}
 		}
-		return base + "/v1/files/" + fileID, nil
-	default:
-		return base + "/v1/tools/" + endpoint, nil
 	}
+	path = strings.TrimSuffix(strings.TrimSuffix(path, "/v1"), "/anthropic")
+	host := strings.ToLower(u.Hostname())
+	port := u.Port()
+	if port != "" && !(port == "443" && u.Scheme == "https") && !(port == "80" && u.Scheme == "http") {
+		host = net.JoinHostPort(host, port)
+	} else if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	origin := strings.ToLower(u.Scheme) + "://" + host + path
+	if u.RawQuery != "" {
+		origin += fmt.Sprintf("?sha256=%x", sha256.Sum256([]byte(u.RawQuery)))
+	}
+	return origin
+}
+
+func buildDeepseekToolsURL(account *Account, endpoint, fileID string, anthropic bool, validate func(string) (string, error)) (*url.URL, error) {
+	var path string
+	switch endpoint {
+	case "files_create":
+		path = "/v1/files"
+	case "files_get", "files_delete":
+		if !isValidDeepseekFileID(fileID) {
+			return nil, fmt.Errorf("invalid file id for deepseek tools url path")
+		}
+		path = "/v1/files/" + fileID
+	case "search", "fetch", "ocr", "asr", "tts":
+		if anthropic {
+			return nil, fmt.Errorf("endpoint %s does not support Anthropic files", endpoint)
+		}
+		path = "/v1/tools/" + endpoint
+	default:
+		return nil, fmt.Errorf("unsupported deepseek tools endpoint: %s", endpoint)
+	}
+	base, deriveAnthropic := deepseekToolsBase(account, anthropic)
+	if base == "" {
+		return nil, fmt.Errorf("no unambiguous configured DeepSeek tools origin")
+	}
+	validated, err := validate(base)
+	if err != nil {
+		return nil, err
+	}
+	u, err := url.Parse(validated)
+	if err != nil {
+		return nil, err
+	}
+	prefix := strings.TrimSuffix(strings.TrimRight(u.Path, "/"), "/v1")
+	if !anthropic && account.IsAnthropicProtocol() {
+		prefix = strings.TrimSuffix(prefix, "/anthropic")
+	}
+	if deriveAnthropic && !strings.HasSuffix(prefix, "/anthropic") {
+		prefix += "/anthropic"
+	}
+	u.Path = prefix + path
+	return u, nil
 }

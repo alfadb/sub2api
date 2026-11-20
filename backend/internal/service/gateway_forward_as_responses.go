@@ -35,6 +35,7 @@ func (s *GatewayService) ForwardAsResponses(
 	body []byte,
 	parsed *ParsedRequest,
 ) (*ForwardResult, error) {
+	body = filterDeepSeekRequest(body, account)
 	startTime := time.Now()
 
 	normalizedBody, normalized, err := normalizeOpenAIResponsesLegacyIngressWithConfig(s.cfg, body)
@@ -798,7 +799,25 @@ func appendRawJSON(existing json.RawMessage, fragment string) json.RawMessage {
 }
 
 // writeResponsesError writes an error response in OpenAI Responses API format.
+func gatewayErrorStreamStarted(c *gin.Context) bool {
+	return c.Writer.Written() && strings.HasPrefix(c.Writer.Header().Get("Content-Type"), "text/event-stream")
+}
+
+func writeResponsesStreamError(c *gin.Context, code, message string) bool {
+	if !gatewayErrorStreamStarted(c) {
+		return false
+	}
+	MarkResponseCommitted(c)
+	source, _ := json.Marshal(gin.H{"error": gin.H{"code": code, "message": message}})
+	_, _ = fmt.Fprint(c.Writer, buildOpenAIResponseFailedSSE("", "", 0, source, message))
+	c.Writer.Flush()
+	return true
+}
+
 func writeResponsesError(c *gin.Context, statusCode int, code, message string) {
+	if writeResponsesStreamError(c, code, message) {
+		return
+	}
 	MarkResponseCommitted(c)
 	c.JSON(statusCode, gin.H{
 		"error": gin.H{

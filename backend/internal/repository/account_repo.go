@@ -143,6 +143,10 @@ func createAccountRecord(ctx context.Context, client *dbent.Client, account *ser
 		return service.ErrAccountNilInput
 	}
 
+	if account.Platform == service.PlatformDeepseek {
+		account.Extra = copyJSONMap(account.Extra)
+		delete(account.Extra, "deepseek_tools_supported")
+	}
 	builder := client.Account.Create().
 		SetName(account.Name).
 		SetNillableNotes(account.Notes).
@@ -682,7 +686,11 @@ func lockAndMergeAccountProbeExtra(
 			extra -> 'opencode_go_usage_auto_refresh',
 			extra -> 'opencode_go_usage_snapshot',
 			extra -> 'grok_observed_models',
-			extra -> 'upstream_model_metadata'
+			extra -> 'upstream_model_metadata',
+			CASE WHEN platform = 'deepseek' AND platform = $2 AND type = $3
+				AND NOT (`+deepseekToolsBaseChangedSQL("$4::jsonb")+`)
+				AND jsonb_typeof(extra -> 'deepseek_tools_supported') = 'boolean'
+				THEN (extra ->> 'deepseek_tools_supported')::boolean END
 		FROM accounts
 		WHERE id = $1 AND deleted_at IS NULL
 		FOR NO KEY UPDATE
@@ -713,6 +721,7 @@ func lockAndMergeAccountProbeExtra(
 		currentOpenCodeSnapshot        []byte
 		currentGrokObservedModels      []byte
 		currentUpstreamModelMetadata   []byte
+		deepseekToolsSupported         *bool
 	)
 	if err := rows.Scan(
 		&identityUnchanged,
@@ -729,6 +738,7 @@ func lockAndMergeAccountProbeExtra(
 		&currentOpenCodeSnapshot,
 		&currentGrokObservedModels,
 		&currentUpstreamModelMetadata,
+		&deepseekToolsSupported,
 	); err != nil {
 		return nil, err
 	}
@@ -737,6 +747,10 @@ func lockAndMergeAccountProbeExtra(
 	}
 
 	extra := copyJSONMap(normalizeJSONMap(account.Extra))
+	delete(extra, "deepseek_tools_supported")
+	if deepseekToolsSupported != nil {
+		extra["deepseek_tools_supported"] = *deepseekToolsSupported
+	}
 	for _, key := range []string{
 		service.UpstreamBillingProbeEnabledExtraKey,
 		service.UpstreamBillingRateSyncEnabledExtraKey,
@@ -871,6 +885,19 @@ func decodeAccountExtraJSON(raw []byte) (any, bool, error) {
 	return value, true, nil
 }
 
+var deepseekToolsBaseKeys = [...]string{"base_url", "api_base_urls", "api_protocol", "account_mode"}
+
+// These credential fields select the tools and Files base URLs. Compare the
+// old and new row inside the write so bulk edits preserve unchanged markers.
+func deepseekToolsBaseChangedSQL(newCredentials string) string {
+	changed := make([]string, 0, len(deepseekToolsBaseKeys))
+	for _, key := range deepseekToolsBaseKeys {
+		field := " -> '" + key + "'"
+		changed = append(changed, "credentials"+field+" IS DISTINCT FROM "+newCredentials+field)
+	}
+	return strings.Join(changed, " OR ")
+}
+
 func (r *accountRepository) UpdateCredentials(ctx context.Context, id int64, credentials map[string]any) error {
 	payload, err := json.Marshal(normalizeJSONMap(credentials))
 	if err != nil {
@@ -960,7 +987,8 @@ func (r *accountRepository) UpdateCredentials(ctx context.Context, id int64, cre
 					AND credentials IS DISTINCT FROM $1::jsonb
 				THEN COALESCE(extra, '{}'::jsonb) - 'upstream_billing_probe'
 				ELSE extra
-			END,
+			END - CASE WHEN platform = 'deepseek' AND (`+deepseekToolsBaseChangedSQL("$1::jsonb")+`)
+				THEN ARRAY['deepseek_tools_supported'] ELSE ARRAY[]::text[] END,
 			updated_at = NOW()
 		WHERE id = $2 AND deleted_at IS NULL
 	`, string(payload), id)
@@ -2863,8 +2891,22 @@ func (r *accountRepository) AutoPauseExpiredAccounts(ctx context.Context, now ti
 }
 
 func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates map[string]any) error {
+	return r.updateExtra(ctx, id, updates, nil)
+}
+
+// UpdateDeepseekToolsSupport discards a late probe if the account was edited
+// during its HTTP request. The scheduler outbox and marker share one commit.
+func (r *accountRepository) UpdateDeepseekToolsSupport(ctx context.Context, account *service.Account, supported *bool) error {
+	updates := map[string]any{"deepseek_tools_supported": nil}
+	if supported != nil {
+		updates["deepseek_tools_supported"] = *supported
+	}
+	return r.updateExtra(ctx, account.ID, updates, account)
+}
+
+func (r *accountRepository) updateExtra(ctx context.Context, id int64, updates map[string]any, probed *service.Account) error {
 	if scoped := r.accountTransactionScope(ctx); scoped != r {
-		return scoped.UpdateExtra(ctx, id, updates)
+		return scoped.updateExtra(ctx, id, updates, probed)
 	}
 	updates = stripCodexFingerprintSeedFromExtraUpdate(updates)
 	if len(updates) == 0 {
@@ -2902,11 +2944,21 @@ func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates m
 	if service.ShouldEnsureCodexFingerprintSeedForExtraUpdates(updates) {
 		extraExpression = ensureCodexFingerprintSeedSQL(extraExpression)
 	}
-	result, err := client.ExecContext(
-		ctx,
-		"UPDATE accounts SET extra = "+extraExpression+", updated_at = NOW() WHERE id = $2 AND deleted_at IS NULL",
-		string(payload), id,
-	)
+	where := " WHERE id = $2 AND deleted_at IS NULL"
+	args := []any{string(payload), id}
+	if probed != nil {
+		credentials, err := json.Marshal(normalizeJSONMap(probed.Credentials))
+		if err != nil {
+			return err
+		}
+		where += " AND platform = 'deepseek' AND type = 'apikey' AND credentials = $3::jsonb AND proxy_id IS NOT DISTINCT FROM $4"
+		args = append(args, string(credentials), probed.ProxyID)
+		if updates["deepseek_tools_supported"] == nil {
+			extraExpression = "(" + extraExpression + ") - 'deepseek_tools_supported'"
+			where += " AND extra ? 'deepseek_tools_supported'"
+		}
+	}
+	result, err := client.ExecContext(ctx, "UPDATE accounts SET extra = "+extraExpression+", updated_at = NOW()"+where, args...)
 
 	if err != nil {
 		return err
@@ -2917,6 +2969,9 @@ func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates m
 		return err
 	}
 	if affected == 0 {
+		if probed != nil {
+			return nil
+		}
 		return service.ErrAccountNotFound
 	}
 	if durableSchedulerChange {
@@ -3144,6 +3199,10 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 		return 0, nil
 	}
 	updates.Extra = stripCodexFingerprintSeedFromExtraUpdate(updates.Extra)
+	if _, exists := updates.Extra["deepseek_tools_supported"]; exists {
+		updates.Extra = copyJSONMap(updates.Extra)
+		delete(updates.Extra, "deepseek_tools_supported")
+	}
 
 	setClauses := make([]string, 0, 8)
 	args := make([]any, 0, 8)
@@ -3263,7 +3322,14 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 				" AND COALESCE(btrim("+credentialPlaceholder+"::jsonb ->> 'account_mode') <> 'zen', true) IS NOT TRUE")
 	}
 
-	if len(updates.Extra) > 0 || len(ollamaGroupIdentityChanges) > 0 || len(opencodeGroupIdentityChanges) > 0 || ollamaProxyIdentityChanged != "" || updates.EnsureCodexFingerprintSeed {
+	deepseekBaseEdited := false
+	for _, key := range deepseekToolsBaseKeys {
+		if _, ok := updates.Credentials[key]; ok {
+			deepseekBaseEdited = true
+			break
+		}
+	}
+	if len(updates.Extra) > 0 || len(ollamaGroupIdentityChanges) > 0 || len(opencodeGroupIdentityChanges) > 0 || ollamaProxyIdentityChanged != "" || updates.EnsureCodexFingerprintSeed || deepseekBaseEdited {
 		extraExpression := "COALESCE(extra, '{}'::jsonb)"
 		if len(updates.Extra) > 0 {
 			payload, err := json.Marshal(updates.Extra)
@@ -3342,6 +3408,10 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 		}
 		if len(caseBranches) > 0 {
 			extraExpression = "CASE" + strings.Join(caseBranches, "") + " ELSE " + extraExpression + " END"
+		}
+		if deepseekBaseEdited {
+			newCredentials := "(COALESCE(credentials, '{}'::jsonb) || " + credentialPlaceholder + "::jsonb)"
+			extraExpression = "(" + extraExpression + ") - CASE WHEN platform = 'deepseek' AND (" + deepseekToolsBaseChangedSQL(newCredentials) + ") THEN ARRAY['deepseek_tools_supported'] ELSE ARRAY[]::text[] END"
 		}
 		if updates.EnsureCodexFingerprintSeed {
 			extraExpression = ensureCodexFingerprintSeedSQL(extraExpression)

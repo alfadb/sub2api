@@ -1,8 +1,11 @@
 package middleware
 
 import (
+	"net/http"
+
 	"github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
@@ -15,7 +18,16 @@ func AbortWithRequestBodyReadFailure(c *gin.Context, component string, err error
 	if failure.Kind != httputil.RequestBodyReadErrorMaxBytes {
 		logRequestBodyReadFailure(c, component, failure)
 	}
-	c.AbortWithStatusJSON(failure.Status, gin.H{"error": gin.H{"type": "invalid_request_error", "message": failure.Message}})
+	errType := "invalid_request_error"
+	body := gin.H{}
+	if c.Request.URL.Path == "/v1/files" && service.IsDeepseekFilesAnthropicRequest(c) {
+		body["type"] = "error"
+		if failure.Status == http.StatusRequestEntityTooLarge {
+			errType = "request_too_large"
+		}
+	}
+	body["error"] = gin.H{"type": errType, "message": failure.Message}
+	c.AbortWithStatusJSON(failure.Status, body)
 }
 
 func logRequestBodyReadFailure(c *gin.Context, component string, failure httputil.RequestBodyReadFailure) {

@@ -489,6 +489,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	} else if changed {
 		body = cappedBody
 	}
+	if !h.bindDeepseekFileReferences(c, apiKey, service.APIProtocolResponses, &body, h.errorResponse) {
+		return
+	}
 	if normalizedBody, changed := normalizeCodexUntrustedContext(body); changed {
 		body = normalizedBody
 		reqLog.Info("openai.codex_untrusted_context_normalized",
@@ -1238,22 +1241,6 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		return
 	}
 
-	// Anthropic file 源归属在进入任何并发等待/心跳/计费之前判定：拒绝类判定
-	// 直接返回，避免为注定失败的请求占用用户并发槽。file_id 归属错误不能靠
-	// 换号或重试解决，必须让客户端重新上传。
-	fileOwnerID, fileOwnerPlatform, fileOwnerDecision, fileOwnerErr := h.gatewayService.ResolveAnthropicFileOwner(c.Request.Context(), apiKey.UserID, body)
-	if h.rejectAnthropicMessagesFileOwner(c, reqLog, apiKey.UserID, fileOwnerDecision, fileOwnerErr, streamStarted) {
-		return
-	}
-	fileOwnerPinned := fileOwnerDecision == service.AnthropicFileOwnerPinned
-	if fileOwnerPinned {
-		reqLog = reqLog.With(
-			zap.Int64("anthropic_file_owner_user_id", apiKey.UserID),
-			zap.Int64("anthropic_file_owner_account_id", fileOwnerID),
-			zap.String("anthropic_file_owner_platform", fileOwnerPlatform),
-		)
-	}
-
 	modelResult := gjson.GetBytes(body, "model")
 	if !modelResult.Exists() || modelResult.Type != gjson.String || modelResult.String() == "" {
 		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "model is required")
@@ -1263,6 +1250,9 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	ensureCompositeTargetPlatform(c, apiKey, reqModel)
 	if !openAICompatibleTextTargetAllowed(c, apiKey, reqModel) {
 		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "Model is not supported by this OpenAI-compatible endpoint for composite groups")
+		return
+	}
+	if !h.bindDeepseekFileReferences(c, apiKey, service.APIProtocolAnthropic, &body, h.anthropicErrorResponse) {
 		return
 	}
 	bindOpenAIReasoningEffortPolicyForMessagesRequest(c, apiKey, body)
@@ -1354,42 +1344,20 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			currentRoutingModel = effectiveMappedModel
 		}
 		reqLog.Debug("openai_messages.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
-		var selection *service.AccountSelectionResult
-		var scheduleDecision service.OpenAIAccountScheduleDecision
-		var err error
-		if fileOwnerPinned {
-			if _, ownerFailed := failedAccountIDs[fileOwnerID]; ownerFailed {
-				// 归属账号已失败：file_id 在别的上游无效，换号只会继续 400。
-				reqLog.Warn("openai_messages.anthropic_file_owner_unavailable",
-					zap.Int64("anthropic_file_owner_account_id", fileOwnerID),
-					zap.String("anthropic_file_owner_platform", fileOwnerPlatform),
-				)
-				h.anthropicStreamingAwareError(c, http.StatusBadGateway, "api_error", "Anthropic file owner account is unavailable", streamStarted)
-				return
-			}
-			selection, scheduleDecision, err = h.gatewayService.SelectAnthropicFileOwnerAccount(
-				c.Request.Context(),
-				apiKey.GroupID,
-				fileOwnerID,
-				fileOwnerPlatform,
-				currentRoutingModel,
-			)
-		} else {
-			selection, scheduleDecision, err = h.gatewayService.SelectAccountWithSchedulerForCapability(
-				c.Request.Context(),
-				apiKey.GroupID,
-				"", // no previous_response_id
-				sessionHash,
-				currentRoutingModel,
-				failedAccountIDs,
-				service.OpenAIUpstreamTransportAny,
-				service.OpenAIEndpointCapabilityChatCompletions,
-				false,
-				false,
-				true,
-				requestPlatform,
-			)
-		}
+		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
+			c.Request.Context(),
+			apiKey.GroupID,
+			"", // no previous_response_id
+			sessionHash,
+			currentRoutingModel,
+			failedAccountIDs,
+			service.OpenAIUpstreamTransportAny,
+			service.OpenAIEndpointCapabilityChatCompletions,
+			false,
+			false,
+			true,
+			requestPlatform,
+		)
 		if err != nil {
 			if failoverClientGone(c) {
 				reqLog.Info("openai_messages.account_select_aborted_client_disconnected", zap.Error(err))
@@ -1665,53 +1633,6 @@ func (h *OpenAIGatewayHandler) anthropicErrorResponse(c *gin.Context, status int
 			"message": message,
 		},
 	})
-}
-
-// rejectAnthropicMessagesFileOwner 把 file 源归属判定映射为 Anthropic 形状错误。
-// 返回 true 表示已写出拒绝响应，调用方必须立即 return，不得进入选号：
-//   - foreign → 403（已知属于其他用户，不能当作未命中回原路）；
-//   - unknown → 400（未注册/旧值/无法识别用户，要求重新上传）；
-//   - conflict → 400（同一请求的 file 指向不同账号，无法同时满足）；
-//   - storeError → 503（归属缓存读取失败，可重试）。
-func (h *OpenAIGatewayHandler) rejectAnthropicMessagesFileOwner(
-	c *gin.Context, reqLog *zap.Logger, userID int64,
-	decision service.AnthropicFileOwnerDecision, resolveErr error, streamStarted bool,
-) bool {
-	switch decision {
-	case service.AnthropicFileOwnerForeign:
-		if reqLog != nil {
-			reqLog.Warn("openai_messages.anthropic_file_owner_foreign",
-				zap.Int64("anthropic_file_owner_user_id", userID))
-		}
-		h.anthropicStreamingAwareError(c, http.StatusForbidden, "permission_error", "file_id belongs to another user", streamStarted)
-		return true
-	case service.AnthropicFileOwnerUnknown:
-		if reqLog != nil {
-			reqLog.Warn("openai_messages.anthropic_file_owner_unknown",
-				zap.Int64("anthropic_file_owner_user_id", userID))
-		}
-		h.anthropicStreamingAwareError(c, http.StatusBadRequest, "invalid_request_error",
-			"file_id is not registered to this API key; re-upload the file", streamStarted)
-		return true
-	case service.AnthropicFileOwnerConflict:
-		if reqLog != nil {
-			reqLog.Warn("openai_messages.anthropic_file_owner_conflict",
-				zap.Int64("anthropic_file_owner_user_id", userID))
-		}
-		h.anthropicStreamingAwareError(c, http.StatusBadRequest, "invalid_request_error",
-			"file_ids resolve to different accounts; re-upload the files", streamStarted)
-		return true
-	case service.AnthropicFileOwnerStoreError:
-		if reqLog != nil {
-			reqLog.Error("openai_messages.anthropic_file_owner_lookup_failed",
-				zap.Int64("anthropic_file_owner_user_id", userID), zap.Error(resolveErr))
-		}
-		h.anthropicStreamingAwareError(c, http.StatusServiceUnavailable, "api_error",
-			"file owner lookup is temporarily unavailable", streamStarted)
-		return true
-	default:
-		return false
-	}
 }
 
 // anthropicStreamingAwareError handles errors that may occur during streaming,
@@ -2243,14 +2164,22 @@ func (h *OpenAIGatewayHandler) acquireResponsesUserSlot(
 	streamStarted *bool,
 	reqLog *zap.Logger,
 ) (func(), bool) {
+	return h.acquireOpenAIUserSlot(c, userID, userConcurrency, reqStream, streamStarted, reqLog, nil, wrapReleaseOnDone)
+}
+
+func (h *OpenAIGatewayHandler) acquireOpenAIUserSlot(c *gin.Context, userID int64, userConcurrency int, reqStream bool, streamStarted *bool, reqLog *zap.Logger, writeError openAISlotErrorWriter, wrapRelease slotReleasePolicy) (func(), bool) {
 	ctx := c.Request.Context()
 	userReleaseFunc, err := h.concurrencyHelper.AcquireUserSlotWithWait(c, userID, userConcurrency, reqStream, streamStarted)
 	if err != nil {
 		reqLog.Warn("openai.user_slot_acquire_failed", zap.Error(err))
-		h.handleConcurrencyError(c, err, "user", *streamStarted)
+		if writeError == nil {
+			h.handleConcurrencyError(c, err, "user", *streamStarted)
+		} else {
+			writeError(concurrencyErrorResponse(err, "user"))
+		}
 		return nil, false
 	}
-	return wrapReleaseOnDone(ctx, userReleaseFunc), true
+	return wrapRelease(ctx, userReleaseFunc), true
 }
 
 // openAISlotAcquireResult 是账号槽位获取的三态结果。
@@ -2426,10 +2355,14 @@ func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 	streamStarted *bool,
 	reqLog *zap.Logger,
 ) (func(), openAISlotAcquireResult) {
-	return h.acquireOpenAIAccountSlot(c, groupID, sessionHash, selection, reqStream, streamStarted, reqLog, nil)
+	return h.acquireOpenAIAccountSlot(c, groupID, sessionHash, selection, reqStream, streamStarted, reqLog, nil, wrapReleaseOnDone)
 }
 
 type openAISlotErrorWriter func(status int, errType, code, message string)
+type slotReleasePolicy func(context.Context, func()) func()
+
+// The forwarding handler owns these slots while detached work is draining.
+func releaseSlotOnReturn(_ context.Context, release func()) func() { return release }
 
 // acquireOpenAIAccountSlot centralizes scheduler selection admission. The
 // optional error writer lets non-Responses endpoints retain their wire format
@@ -2443,6 +2376,7 @@ func (h *OpenAIGatewayHandler) acquireOpenAIAccountSlot(
 	streamStarted *bool,
 	reqLog *zap.Logger,
 	writeError openAISlotErrorWriter,
+	wrapRelease slotReleasePolicy,
 ) (func(), openAISlotAcquireResult) {
 	if writeError == nil {
 		writeError = func(status int, errType, code, message string) {
@@ -2477,7 +2411,7 @@ func (h *OpenAIGatewayHandler) acquireOpenAIAccountSlot(
 				reqLog.Warn("openai.bind_sticky_session_after_profit_admission_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 			}
 		}
-		return wrapReleaseOnDone(ctx, selection.ReleaseFunc), openAISlotAcquireOK
+		return wrapRelease(ctx, selection.ReleaseFunc), openAISlotAcquireOK
 	}
 	if selection.WaitPlan == nil {
 		markOpsRoutingCapacityLimited(c)
@@ -2512,7 +2446,7 @@ func (h *OpenAIGatewayHandler) acquireOpenAIAccountSlot(
 		if err := h.gatewayService.BindStickySessionAfterProfitAdmission(ctx, groupID, sessionHash, account.ID); err != nil {
 			reqLog.Warn("openai.bind_sticky_session_after_profit_admission_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 		}
-		return wrapReleaseOnDone(ctx, fastReleaseFunc), openAISlotAcquireOK
+		return wrapRelease(ctx, fastReleaseFunc), openAISlotAcquireOK
 	}
 
 	canWait, waitErr := h.concurrencyHelper.IncrementAccountWaitCount(ctx, account.ID, selection.WaitPlan.MaxWaiting)
@@ -2568,7 +2502,7 @@ func (h *OpenAIGatewayHandler) acquireOpenAIAccountSlot(
 	if err := h.gatewayService.BindStickySessionAfterProfitAdmission(ctx, groupID, sessionHash, account.ID); err != nil {
 		reqLog.Warn("openai.bind_sticky_session_after_profit_admission_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 	}
-	return wrapReleaseOnDone(ctx, accountReleaseFunc), openAISlotAcquireOK
+	return wrapRelease(ctx, accountReleaseFunc), openAISlotAcquireOK
 }
 
 // ResponsesWebSocket handles OpenAI Responses API WebSocket ingress endpoint

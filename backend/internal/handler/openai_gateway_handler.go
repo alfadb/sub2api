@@ -489,7 +489,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	} else if changed {
 		body = cappedBody
 	}
-	if !h.bindDeepseekFileReferences(c, apiKey, service.APIProtocolResponses, body, h.errorResponse) {
+	if !h.bindDeepseekFileReferences(c, apiKey, service.APIProtocolResponses, &body, h.errorResponse) {
 		return
 	}
 	if normalizedBody, changed := normalizeCodexUntrustedContext(body); changed {
@@ -1252,7 +1252,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "Model is not supported by this OpenAI-compatible endpoint for composite groups")
 		return
 	}
-	if !h.bindDeepseekFileReferences(c, apiKey, service.APIProtocolAnthropic, body, h.anthropicErrorResponse) {
+	if !h.bindDeepseekFileReferences(c, apiKey, service.APIProtocolAnthropic, &body, h.anthropicErrorResponse) {
 		return
 	}
 	bindOpenAIReasoningEffortPolicyForMessagesRequest(c, apiKey, body)
@@ -2164,10 +2164,10 @@ func (h *OpenAIGatewayHandler) acquireResponsesUserSlot(
 	streamStarted *bool,
 	reqLog *zap.Logger,
 ) (func(), bool) {
-	return h.acquireOpenAIUserSlot(c, userID, userConcurrency, reqStream, streamStarted, reqLog, nil)
+	return h.acquireOpenAIUserSlot(c, userID, userConcurrency, reqStream, streamStarted, reqLog, nil, wrapReleaseOnDone)
 }
 
-func (h *OpenAIGatewayHandler) acquireOpenAIUserSlot(c *gin.Context, userID int64, userConcurrency int, reqStream bool, streamStarted *bool, reqLog *zap.Logger, writeError openAISlotErrorWriter) (func(), bool) {
+func (h *OpenAIGatewayHandler) acquireOpenAIUserSlot(c *gin.Context, userID int64, userConcurrency int, reqStream bool, streamStarted *bool, reqLog *zap.Logger, writeError openAISlotErrorWriter, wrapRelease slotReleasePolicy) (func(), bool) {
 	ctx := c.Request.Context()
 	userReleaseFunc, err := h.concurrencyHelper.AcquireUserSlotWithWait(c, userID, userConcurrency, reqStream, streamStarted)
 	if err != nil {
@@ -2179,7 +2179,7 @@ func (h *OpenAIGatewayHandler) acquireOpenAIUserSlot(c *gin.Context, userID int6
 		}
 		return nil, false
 	}
-	return wrapReleaseOnDone(ctx, userReleaseFunc), true
+	return wrapRelease(ctx, userReleaseFunc), true
 }
 
 // openAISlotAcquireResult 是账号槽位获取的三态结果。
@@ -2355,10 +2355,14 @@ func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 	streamStarted *bool,
 	reqLog *zap.Logger,
 ) (func(), openAISlotAcquireResult) {
-	return h.acquireOpenAIAccountSlot(c, groupID, sessionHash, selection, reqStream, streamStarted, reqLog, nil)
+	return h.acquireOpenAIAccountSlot(c, groupID, sessionHash, selection, reqStream, streamStarted, reqLog, nil, wrapReleaseOnDone)
 }
 
 type openAISlotErrorWriter func(status int, errType, code, message string)
+type slotReleasePolicy func(context.Context, func()) func()
+
+// The forwarding handler owns these slots while detached work is draining.
+func releaseSlotOnReturn(_ context.Context, release func()) func() { return release }
 
 // acquireOpenAIAccountSlot centralizes scheduler selection admission. The
 // optional error writer lets non-Responses endpoints retain their wire format
@@ -2372,6 +2376,7 @@ func (h *OpenAIGatewayHandler) acquireOpenAIAccountSlot(
 	streamStarted *bool,
 	reqLog *zap.Logger,
 	writeError openAISlotErrorWriter,
+	wrapRelease slotReleasePolicy,
 ) (func(), openAISlotAcquireResult) {
 	if writeError == nil {
 		writeError = func(status int, errType, code, message string) {
@@ -2406,7 +2411,7 @@ func (h *OpenAIGatewayHandler) acquireOpenAIAccountSlot(
 				reqLog.Warn("openai.bind_sticky_session_after_profit_admission_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 			}
 		}
-		return wrapReleaseOnDone(ctx, selection.ReleaseFunc), openAISlotAcquireOK
+		return wrapRelease(ctx, selection.ReleaseFunc), openAISlotAcquireOK
 	}
 	if selection.WaitPlan == nil {
 		markOpsRoutingCapacityLimited(c)
@@ -2441,7 +2446,7 @@ func (h *OpenAIGatewayHandler) acquireOpenAIAccountSlot(
 		if err := h.gatewayService.BindStickySessionAfterProfitAdmission(ctx, groupID, sessionHash, account.ID); err != nil {
 			reqLog.Warn("openai.bind_sticky_session_after_profit_admission_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 		}
-		return wrapReleaseOnDone(ctx, fastReleaseFunc), openAISlotAcquireOK
+		return wrapRelease(ctx, fastReleaseFunc), openAISlotAcquireOK
 	}
 
 	canWait, waitErr := h.concurrencyHelper.IncrementAccountWaitCount(ctx, account.ID, selection.WaitPlan.MaxWaiting)
@@ -2497,7 +2502,7 @@ func (h *OpenAIGatewayHandler) acquireOpenAIAccountSlot(
 	if err := h.gatewayService.BindStickySessionAfterProfitAdmission(ctx, groupID, sessionHash, account.ID); err != nil {
 		reqLog.Warn("openai.bind_sticky_session_after_profit_admission_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 	}
-	return wrapReleaseOnDone(ctx, accountReleaseFunc), openAISlotAcquireOK
+	return wrapRelease(ctx, accountReleaseFunc), openAISlotAcquireOK
 }
 
 // ResponsesWebSocket handles OpenAI Responses API WebSocket ingress endpoint

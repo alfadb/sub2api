@@ -195,6 +195,46 @@ func TestRunCheckForModel_OpenAI_DefaultChatRequest(t *testing.T) {
 	}
 }
 
+func TestRunCheckForModel_ZhipuPresentsZCodeUserAgent(t *testing.T) {
+	h := &openAICaptureHandler{}
+	endpoint := setupFakeOpenAI(t, h)
+
+	res := runCheckForModel(context.Background(), MonitorProviderZhipu, endpoint, "zp-key", "glm-4.6", nil)
+
+	if res.Status != MonitorStatusOperational {
+		t.Fatalf("zhipu check should pass challenge, got status=%s message=%q", res.Status, res.Message)
+	}
+	if userAgent := h.lastHeaders.Get("User-Agent"); !strings.HasPrefix(userAgent, "ZCode/4.0.0 ") {
+		t.Errorf("zhipu monitor request should present ZCode UA, got %q", userAgent)
+	}
+	// 服务端收到的 req.Header 已被规范化，Header.Get 是大小写不敏感的。
+	for header, want := range map[string]string{
+		"X-Zcode-App-Version":  "4.0.0",
+		"X-Zcode-Session-Type": "main",
+		"X-Zcode-Query-Source": "main_turn",
+		"Http-Referer":         "https://zcode.z.ai",
+	} {
+		if got := h.lastHeaders.Get(header); got != want {
+			t.Errorf("upstream header %s = %q, want %q", header, got, want)
+		}
+	}
+	if sessionID := h.lastHeaders.Get("X-Session-Id"); sessionID == "" {
+		t.Error("upstream X-Session-Id should not be empty")
+	}
+	// 字面大小写键（HTTP-Referer / x-zcode-*）曾被 http.Header.Get 回填成空串；
+	// 这里兜底禁止任何名字含 zcode 的头带空值出站。
+	for name, values := range h.lastHeaders {
+		if !strings.Contains(strings.ToLower(name), "zcode") {
+			continue
+		}
+		for _, value := range values {
+			if strings.TrimSpace(value) == "" {
+				t.Errorf("upstream zcode header %s leaked empty value %q", name, values)
+			}
+		}
+	}
+}
+
 func TestGrokMonitorConfiguration(t *testing.T) {
 	if err := validateProvider(MonitorProviderGrok); err != nil {
 		t.Fatalf("grok provider should be supported: %v", err)

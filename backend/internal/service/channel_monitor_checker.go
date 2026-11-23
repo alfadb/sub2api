@@ -296,7 +296,29 @@ func callProvider(ctx context.Context, provider, endpoint, apiKey, model, prompt
 	if err != nil {
 		return "", "", 0, err
 	}
-	headers := mergeHeaders(adapter.buildHeaders(apiKey), opts)
+	baseHeaders := adapter.buildHeaders(apiKey)
+	// 智谱渠道监控同样伪装 ZCode 客户端身份（无入站请求，用固定哨兵会话键）；
+	// mergeHeaders 之后用户自定义 headers 仍可覆盖注入值。
+	if provider == MonitorProviderZhipu {
+		identity := http.Header{}
+		for key, value := range baseHeaders {
+			identity.Set(key, value)
+		}
+		applyZCodeIdentityHeaders(identity, &Account{Platform: PlatformZhipu}, zcodeIdentityOpenAI, "channel-monitor")
+		// 回填直接遍历 http.Header（map[string][]string）自身的键值，保持
+		// setHeaderRaw 写入的字面键名；不能用 Header.Get：它会把键规范化，
+		// 读不到 HTTP-Referer / x-zcode-* 这类字面大小写键，回填成空值。
+		baseHeaders = make(map[string]string, len(identity))
+		for key, values := range identity {
+			for _, value := range values {
+				if value != "" {
+					baseHeaders[key] = value
+					break
+				}
+			}
+		}
+	}
+	headers := mergeHeaders(baseHeaders, opts)
 	full := joinURL(endpoint, monitorRequestPath(provider, endpoint, adapter, model))
 	respBytes, status, err := postRawJSON(ctx, full, body, headers)
 	if err != nil {

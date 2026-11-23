@@ -264,6 +264,13 @@ func (h *GatewayHandler) ZhipuMCPPassthrough(c *gin.Context) {
 			upstreamReq.Header.Del("Content-Type")
 		}
 		upstreamReq.Header.Set("Authorization", "Bearer "+zhipuKey)
+		// 智谱上游同样按 ZCode 客户端身份出站；会话键沿用入站 Mcp-Session-Id，
+		// 无 session 时用固定哨兵键。
+		mcpSessionKey := "mcp"
+		if incomingSessionID != "" {
+			mcpSessionKey = "mcp:" + incomingSessionID
+		}
+		account.ApplyZCodeIdentity(upstreamReq.Header, mcpSessionKey)
 
 		resp, doErr := h.gatewayService.DoZhipuMCPUpstream(account, upstreamReq)
 		if doErr != nil {

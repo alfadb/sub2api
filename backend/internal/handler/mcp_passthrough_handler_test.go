@@ -19,6 +19,7 @@ import (
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
@@ -388,6 +389,48 @@ func TestZhipuMCPPassthrough_AuthHeaderRewriteAndBodyPassthrough(t *testing.T) {
 	// 请求体原样到达、路径镜像智谱端点形态。
 	require.Equal(t, reqBody, string(caps[0].Body))
 	require.Equal(t, "/api/mcp/web_search_prime/mcp", caps[0].Path)
+}
+
+// Scenario: MCP 透传出站同样按 ZCode Desktop 身份改写——zhipu 上游不应看到
+// claude-cli 残留 UA；X-Session-Id 按「账号 + Mcp-Session-Id」稳定派生。
+func TestZhipuMCPPassthrough_PresentsZCodeIdentity(t *testing.T) {
+	r, upstream, _ := newZhipuMCPTestEnv(t,
+		[]service.Account{zhipuMCPTestAccount(11, zhipuMCPTestZhipuKeyA, 1, true)},
+		&service.Group{ID: 7, Platform: service.PlatformZhipu},
+		&zhipuMCPSessionStoreFake{}, true,
+		func(_ int, _ *zhipuMCPCapturedRequest, w http.ResponseWriter) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}`))
+		})
+
+	send := func(sessionID string) {
+		req := zhipuMCPPostRequest("/api/zhipu/api/mcp/zread/mcp",
+			`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`, sessionID)
+		req.Header.Set("User-Agent", "claude-cli/1.0.0 (external, cli)")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		require.Equal(t, http.StatusOK, w.Code)
+	}
+	send("s1")
+	send("s1")
+	send("s2")
+
+	caps := upstream.captured()
+	require.Len(t, caps, 3)
+	for i, cap := range caps {
+		userAgent := cap.Header.Get("User-Agent")
+		require.True(t, strings.HasPrefix(userAgent, "ZCode/4.0.0 "), "request %d UA = %q", i, userAgent)
+		require.NotContains(t, userAgent, "claude-cli")
+	}
+	sessionID := func(i int) string {
+		value := caps[i].Header.Get("X-Session-Id")
+		_, err := uuid.Parse(value)
+		require.NoError(t, err, "request %d X-Session-Id = %q", i, value)
+		return value
+	}
+	require.Equal(t, sessionID(0), sessionID(1), "同一 Mcp-Session-Id 应派生同一 X-Session-Id")
+	require.NotEqual(t, sessionID(0), sessionID(2), "换 Mcp-Session-Id 应换 X-Session-Id")
 }
 
 func TestZhipuMCPPassthrough_SessionAffinity(t *testing.T) {

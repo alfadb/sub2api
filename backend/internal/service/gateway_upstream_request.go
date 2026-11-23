@@ -230,6 +230,9 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 		}
 	}
 
+	// 智谱账号：最终 anthropic-beta 与 session 头定稿后、账号覆写前注入 ZCode 指纹。
+	applyZCodeIdentityHeaders(req.Header, account, zcodeIdentityAnthropic, zcodeConversationKey(c, body))
+
 	// 账号级请求头覆写（仅 anthropic/openai api_key 账号启用时生效；OAuth 路径 no-op）。
 	// 放在所有 header 逻辑之后，确保配置值对同名头拥有最终决定权。
 	account.ApplyHeaderOverrides(req.Context(), req.Header)

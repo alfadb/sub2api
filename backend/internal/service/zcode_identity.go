@@ -15,11 +15,22 @@ import (
 // 仓库 tag v4.0.0：apps/zcode-cli/packages/bootstrap/src/model-config.ts、
 // apps/zcode-cli/packages/adapters/src/model/runner-attribution.ts 与
 // model-request-headers.ts）。上游按客户端身份做风控与降载，claude-cli /
-// Codex / 浏览器身份会落在不利一侧，因此在两条共享上游构造器
-// （sendCCUpstreamRequest / buildNativeAnthropicUpstreamRequest）与账号探测
-// 路径中、ApplyHeaderOverrides 之前强制覆盖；账号级 header_overrides 仍是
-// 最后一步，可覆盖注入值。非 zhipu 账号一律 no-op。zhipu 无原生 Responses，
-// 全部推理流量只经这两条共享构造器出站。
+// Codex / 浏览器身份会落在不利一侧，因此在全部智谱出站构造点、账号级
+// ApplyHeaderOverrides 之前强制覆盖；header_overrides 仍是最后一步，可覆盖
+// 注入值。非 zhipu 账号一律 no-op。
+//
+// 当前覆盖路径（都在 ApplyHeaderOverrides 之前）：
+//   - 推理：sendCCUpstreamRequest、buildNativeAnthropicUpstreamRequest，
+//     以及 generic Anthropic 链 buildUpstreamRequest；
+//   - 账号连接测试三处探针（account_test_service.go、
+//     account_test_service_cn_adaptive.go ×2）；
+//   - 其他出站：MCP 透传（handler 经 ApplyZCodeIdentity）、额度探测、
+//     模型列表、渠道监控。
+//
+// 会话键来自 zcodeConversationKey：有入站请求时按客户端会话头 / body 会话
+// 信号派生；没有入站请求的路径传固定哨兵字符串（"probe"、"quota"、"models"、
+// "channel-monitor"、"mcp" 或 "mcp:<Mcp-Session-Id>"），让这些旁路探测仍按
+// 同一账号派生稳定的 X-Session-Id。
 
 // zcodeIdentityKind 区分出站协议面：ZCode Desktop 的 OpenAI（ai-sdk/
 // openai-compatible）与 Anthropic（ai-sdk/anthropic）两条 SDK 栈 UA 不同。
@@ -97,6 +108,12 @@ func applyZCodeIdentityHeaders(h http.Header, account *Account, kind zcodeIdenti
 	// 会话级稳定派生：同一账号同一会话恒定，换会话即换 ID。
 	setHeaderRaw(h, "X-Session-Id", zcodeSessionIDForAccount(account.ID, sessionKey))
 	setHeaderRaw(h, "X-Zcode-Trace-Id", zcodeTraceIDForAccount(account.ID, sessionKey))
+}
+
+// ApplyZCodeIdentity 是 applyZCodeIdentityHeaders 的导出包装，供引用不到未导出
+// kind 的包（MCP 透传 handler）使用：按 OpenAI 兼容协议面的指纹改写出站头。
+func (a *Account) ApplyZCodeIdentity(h http.Header, sessionKey string) {
+	applyZCodeIdentityHeaders(h, a, zcodeIdentityOpenAI, sessionKey)
 }
 
 // zcodeUserAgent 按 kind 返回对应 SDK 栈的 User-Agent（取自 ZCode v4.0.0

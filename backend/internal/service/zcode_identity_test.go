@@ -162,6 +162,26 @@ func TestApplyZCodeIdentityHeaders_UAVariesByKind(t *testing.T) {
 	require.NotEqual(t, getHeaderRaw(hOpenAI, "User-Agent"), getHeaderRaw(hAnthropic, "User-Agent"))
 }
 
+// TestApplyZCodeIdentity 覆盖 handler 包使用的导出包装：zhipu 账号改写 UA，
+// 非 zhipu 账号逐字节 no-op。
+func TestApplyZCodeIdentity(t *testing.T) {
+	t.Run("zhipu rewrites user agent", func(t *testing.T) {
+		h := claudeCLISampleHeaders()
+		zcodeIdentityTestAccount(PlatformZhipu).ApplyZCodeIdentity(h, "mcp:s1")
+
+		userAgent := getHeaderRaw(h, "user-agent")
+		require.True(t, strings.HasPrefix(userAgent, "ZCode/"+zcodeAppVersion+" "))
+		require.NotContains(t, userAgent, "claude-cli")
+	})
+
+	t.Run("non zhipu noop", func(t *testing.T) {
+		h := claudeCLISampleHeaders()
+		before := h.Clone()
+		zcodeIdentityTestAccount(PlatformKimi).ApplyZCodeIdentity(h, "mcp:s1")
+		require.Equal(t, before, h)
+	})
+}
+
 func TestApplyZCodeIdentityHeaders_NilSafety(t *testing.T) {
 	// h / account 任一为 nil 都必须安全 no-op。
 	require.NotPanics(t, func() {

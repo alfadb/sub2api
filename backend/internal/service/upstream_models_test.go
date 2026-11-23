@@ -439,7 +439,7 @@ func TestBuildOpenAIAPIKeyModelsRequest_ZhipuPresentsZCodeIdentity(t *testing.T)
 		},
 	})
 	require.NoError(t, err)
-	require.True(t, strings.HasPrefix(getHeaderRaw(req.Header, "user-agent"), "ZCode/4.0.0 "))
+	require.True(t, strings.HasPrefix(getHeaderRaw(req.Header, "user-agent"), "ZCode/"+zcodeAppVersion()+" "))
 }
 
 func TestBuildUpstreamModelsRequestSupportsGrokOAuth(t *testing.T) {

@@ -310,6 +310,33 @@ func matchesKnownZhipuNonAPIKeyDifference(tc routingMatrixCase, want, got routin
 		reflect.DeepEqual(got, routingObservation{Error: "account 801 missing api_key", Status: http.StatusOK})
 }
 
+// ZCode 身份注入（priv-features）在 Anthropic 面同时发 Authorization 与
+// X-Api-Key（真实 ZCode 两个头都发）；main 只发 X-Api-Key。仅允许「每条
+// Anthropic 上游请求都只是补了 Authorization: Bearer <同一个 api key>，其余
+// 观测字段完全一致」的差异（任意入站协议都可能路由到 Anthropic 上游）。
+func matchesKnownZhipuDualAuthDifference(tc routingMatrixCase, want, got routingObservation) bool {
+	if tc.platform != PlatformZhipu {
+		return false
+	}
+	if len(want.Requests) == 0 || len(want.Requests) != len(got.Requests) {
+		return false
+	}
+	w := want
+	w.Requests = append([]routingUpstreamRequest(nil), want.Requests...)
+	g := got
+	g.Requests = nil
+	for i := range w.Requests {
+		wantReq, gotReq := w.Requests[i], got.Requests[i]
+		if wantReq.BodyKind != "messages" || wantReq.Authorization != "" || wantReq.APIKey == "" ||
+			gotReq.Authorization != "Bearer "+wantReq.APIKey {
+			return false
+		}
+		w.Requests[i].Authorization = gotReq.Authorization
+	}
+	w.Requests = nil
+	return reflect.DeepEqual(w, g)
+}
+
 func TestUpstreamProtocolRoutingMatrixMatchesMainGolden(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	data, err := os.ReadFile(routingMatrixGoldenPath)
@@ -325,6 +352,7 @@ func TestUpstreamProtocolRoutingMatrixMatchesMainGolden(t *testing.T) {
 	var differences []string
 	mismatched := 0
 	knownDifferences := 0
+	knownDualAuthDifferences := 0
 	for i, tc := range cases {
 		index := golden.Results[i]
 		require.GreaterOrEqual(t, index, 0)
@@ -338,6 +366,10 @@ func TestUpstreamProtocolRoutingMatrixMatchesMainGolden(t *testing.T) {
 			knownDifferences++
 			continue
 		}
+		if matchesKnownZhipuDualAuthDifference(tc, want, got) {
+			knownDualAuthDifferences++
+			continue
+		}
 		mismatched++
 		if len(differences) < 12 {
 			differences = append(differences, fmt.Sprintf("%s\nmain: %s\ncurrent: %s", tc.key(), want, got))
@@ -347,4 +379,8 @@ func TestUpstreamProtocolRoutingMatrixMatchesMainGolden(t *testing.T) {
 	// 2 account types × 4 modes × 3 probe states × 4 address configurations ×
 	// 2 model spellings. A disappeared or expanded exception requires review.
 	require.Equal(t, 192, knownDifferences, "unexpected change to the declared Zhipu non-API-Key difference")
+	// Zhipu api-key 账号所有实际路由到 Anthropic 上游（body_kind=messages）的
+	// 用例：4 种入站 × 5 种 api_protocol × 3 种 probe × 4 种地址形态 ×
+	// 2 种模型写法。A disappeared or expanded exception requires review.
+	require.Equal(t, 480, knownDualAuthDifferences, "unexpected change to the declared Zhipu dual-auth difference")
 }

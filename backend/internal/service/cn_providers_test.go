@@ -498,7 +498,7 @@ func TestCNProviderQuotaService_ZhipuProbePresentsZCodeIdentity(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, upstream.request)
 	require.True(t,
-		strings.HasPrefix(upstream.request.Header.Get("User-Agent"), "ZCode/4.0.0 "),
+		strings.HasPrefix(upstream.request.Header.Get("User-Agent"), "ZCode/"+zcodeAppVersion()+" "),
 		"zhipu quota probe should present ZCode UA, got %q", upstream.request.Header.Get("User-Agent"))
 }
 

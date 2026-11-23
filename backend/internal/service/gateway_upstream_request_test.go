@@ -89,12 +89,14 @@ func TestBuildUpstreamRequest_ZhipuPresentsZCodeIdentity(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t,
-		"ZCode/4.0.0 ai-sdk/anthropic/3.0.81 ai-sdk/provider-utils/4.0.27 runtime/node.js/24",
+		"ZCode/"+zcodeAppVersion()+" ai-sdk/anthropic/3.0.81 ai-sdk/provider-utils/4.0.27 runtime/node.js/24",
 		getHeaderRaw(upstreamReq.Header, "user-agent"))
 	require.Empty(t, getHeaderRaw(upstreamReq.Header, "x-app"))
-	require.Empty(t, getHeaderRaw(upstreamReq.Header, "accept-language"))
+	// undici 默认头：客户端传 en-US，出站固定为 *。
+	require.Equal(t, "*", getHeaderRaw(upstreamReq.Header, "accept-language"))
+	require.Equal(t, "cors", getHeaderRaw(upstreamReq.Header, "sec-fetch-mode"))
 	require.Equal(t, "context-1m-2025-08-07", getHeaderRaw(upstreamReq.Header, "anthropic-beta"))
-	require.Equal(t, "4.0.0", getHeaderRaw(upstreamReq.Header, "X-Zcode-App-Version"))
+	require.Equal(t, zcodeAppVersion(), getHeaderRaw(upstreamReq.Header, "X-Zcode-App-Version"))
 	require.Equal(t, zcodeSessionIDForAccount(account.ID, "abc"),
 		getHeaderRaw(upstreamReq.Header, "X-Session-Id"))
 }

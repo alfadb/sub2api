@@ -24,13 +24,29 @@ import (
 //     以及 generic Anthropic 链 buildUpstreamRequest；
 //   - 账号连接测试三处探针（account_test_service.go、
 //     account_test_service_cn_adaptive.go ×2）；
-//   - 其他出站：MCP 透传（handler 经 ApplyZCodeIdentity）、额度探测、
-//     模型列表、渠道监控。
+//   - 其他出站：额度探测、模型列表、渠道监控。
+//
+// MCP 透传是唯一例外：真实 ZCode 的 MCP 客户端（@modelcontextprotocol/client
+// 的 StreamableHTTPClientTransport）根本不带 ZCode 身份头，见
+// ApplyZCodeMCPTransportHeaders。
 //
 // 会话键来自 zcodeConversationKey：有入站请求时按客户端会话头 / body 会话
 // 信号派生；没有入站请求的路径传固定哨兵字符串（"probe"、"quota"、"models"、
-// "channel-monitor"、"mcp" 或 "mcp:<Mcp-Session-Id>"），让这些旁路探测仍按
-// 同一账号派生稳定的 X-Session-Id。
+// "channel-monitor"），让这些旁路探测仍按同一账号派生稳定的 X-Session-Id。
+//
+// 版本号不写死：UA 的 "ZCode/<version>" 与 X-Zcode-App-Version 都取自
+// zcodeAppVersion()（见 zcode_release.go，从官方更新清单懒加载）。
+//
+// 已知无法对齐的传输层差异（真实 ZCode v4.0.0 客户端 vs 本网关）：
+//   - 真实客户端走 Node 内置 fetch（undici）的 HTTP/1.1，头名全小写且按字母序
+//     输出（经 SDK 的 Headers 往返后顺序稳定）；网关用 Go net/http，头名大小写
+//     （canonical 与 setHeaderRaw 的字面形态）和发送顺序都无法与真实客户端逐
+//     字节一致。
+//   - 真实客户端自动带 Accept-Encoding: br, gzip, deflate 并自行解压；Go 的
+//     transport 不会解 brotli，所以这里删除出站 Accept-Encoding，让 Go 自己
+//     协商压缩并自动解压（取值必然与真实客户端不同）。
+//   - 版本号来自 zcode_release.go 的官方清单懒加载，进程首次出站时可能仍是
+//     内置默认值。
 
 // zcodeIdentityKind 区分出站协议面：ZCode Desktop 的 OpenAI（ai-sdk/
 // openai-compatible）与 Anthropic（ai-sdk/anthropic）两条 SDK 栈 UA 不同。
@@ -41,8 +57,20 @@ const (
 	zcodeIdentityAnthropic
 )
 
-// zcodeAppVersion ZCode Desktop 版本，UA 与 X-Zcode-App-Version 同源。
-const zcodeAppVersion = "4.0.0"
+// zcodeDarwinReleases 真实 macOS 的 Darwin 内核号（24.x = macOS 15、
+// 25.x = macOS 26、27.x = macOS 27）。按账号 ID 对表长度取模稳定选取：避免所有
+// 账号看起来像同一台机器，同时单账号的 X-Os-Version 长期不变。表内顺序让现有
+// 线上账号 159 继续落在原先的 25.5.0 上（保持设备指纹连续）。
+var zcodeDarwinReleases = []string{"25.1.0", "25.3.0", "24.6.0", "25.5.0", "27.0.0", "24.5.0"}
+
+// zcodeOsVersionForAccount 按账号 ID 稳定选取 Darwin 内核号（负数取绝对值）。
+func zcodeOsVersionForAccount(accountID int64) string {
+	index := accountID % int64(len(zcodeDarwinReleases))
+	if index < 0 {
+		index = -index
+	}
+	return zcodeDarwinReleases[index]
+}
 
 // zcodeSessionIDNamespace X-Session-Id 派生用的固定 UUIDv5 命名空间（值本身
 // 任意，仅用于让同一账号同一会话恒定派生同一会话 ID）。
@@ -56,6 +84,8 @@ var zcodeTraceIDNamespace = uuid.MustParse("b7c2e4a9-1d3f-4e6b-8a05-2c9d7f41e6b8
 // 只剥身份头：authorization / x-api-key / content-type / accept /
 // anthropic-version 等鉴权与协议头不在剥离范围（anthropic-beta 只过滤
 // claude-code-* / oauth-* 令牌，见 zcodeFilterAnthropicBetaHeader）。
+// accept-language / sec-fetch-mode 剥掉后按真实客户端（undici）的默认值
+// "*" 与 "cors" 重写。
 var zcodeConflictingIdentityHeaders = []string{
 	"user-agent",
 	"x-app",
@@ -86,17 +116,34 @@ func applyZCodeIdentityHeaders(h http.Header, account *Account, kind zcodeIdenti
 	deleteZCodePrefixedHeaders(h, "x-codex-")
 	deleteZCodePrefixedHeaders(h, "x-stainless-")
 	zcodeFilterAnthropicBetaHeader(h)
+	// 真实客户端由 Node 内置 fetch（undici）发起，会自动带
+	// Accept-Encoding: br, gzip, deflate 并自行解压。Go 的 transport 不会解
+	// brotli，不能照搬该值：删除出站 Accept-Encoding（任意大小写），让 Go 的
+	// 传输层自己协商压缩并自动解压（显式值会关闭 Go 的自动解压）。
+	for key := range h {
+		if strings.EqualFold(key, "accept-encoding") {
+			delete(h, key)
+		}
+	}
+
+	// undici 的两个默认头：值就是 "*" 与 "cors"（前面已剥离入站残留值）。
+	setHeaderRaw(h, "accept-language", "*")
+	setHeaderRaw(h, "sec-fetch-mode", "cors")
+
+	// 版本号从官方更新清单懒加载，同一次改写内只取一次，保证 UA 与
+	// X-Zcode-App-Version 自洽。
+	version := zcodeAppVersion()
 
 	// setHeaderRaw 写字面 casing（与 header_util.go 惯例一致）；HTTP-Referer
 	// 尤其必须如此，Header.Set 会把它规范化成 Http-Referer，与真实客户端不符。
-	setHeaderRaw(h, "User-Agent", zcodeUserAgent(kind))
-	setHeaderRaw(h, "X-Zcode-App-Version", zcodeAppVersion)
+	setHeaderRaw(h, "User-Agent", zcodeUserAgent(kind, version))
+	setHeaderRaw(h, "X-Zcode-App-Version", version)
 	setHeaderRaw(h, "X-Zcode-Agent", "glm")
 	setHeaderRaw(h, "X-Title", "Z Code@electron")
 	setHeaderRaw(h, "HTTP-Referer", "https://zcode.z.ai")
 	setHeaderRaw(h, "X-Platform", "darwin-arm64")
 	setHeaderRaw(h, "X-Os-Category", "macos")
-	setHeaderRaw(h, "X-Os-Version", "25.5.0")
+	setHeaderRaw(h, "X-Os-Version", zcodeOsVersionForAccount(account.ID))
 	setHeaderRaw(h, "X-Release-Channel", "production")
 	setHeaderRaw(h, "X-Client-Language", "zh-CN")
 	setHeaderRaw(h, "X-Client-Timezone", "Asia/Shanghai")
@@ -108,22 +155,45 @@ func applyZCodeIdentityHeaders(h http.Header, account *Account, kind zcodeIdenti
 	// 会话级稳定派生：同一账号同一会话恒定，换会话即换 ID。
 	setHeaderRaw(h, "X-Session-Id", zcodeSessionIDForAccount(account.ID, sessionKey))
 	setHeaderRaw(h, "X-Zcode-Trace-Id", zcodeTraceIDForAccount(account.ID, sessionKey))
+
+	// Anthropic 面：真实 ZCode 同时发 Authorization 与 X-Api-Key 两套鉴权。
+	if kind == zcodeIdentityAnthropic {
+		zcodeEnsureAnthropicDualAuth(h)
+	}
 }
 
-// ApplyZCodeIdentity 是 applyZCodeIdentityHeaders 的导出包装，供引用不到未导出
-// kind 的包（MCP 透传 handler）使用：按 OpenAI 兼容协议面的指纹改写出站头。
-func (a *Account) ApplyZCodeIdentity(h http.Header, sessionKey string) {
-	applyZCodeIdentityHeaders(h, a, zcodeIdentityOpenAI, sessionKey)
+// ApplyZCodeMCPTransportHeaders 把 MCP 透传出站头改写为真实 ZCode 客户端的
+// 传输层形态，供 handler 包调用。
+//
+// 依据 ZCode v4.0.0 源码：MCP 走 @modelcontextprotocol/client 的
+// StreamableHTTPClientTransport，未包装任何 ZCode 身份头——请求里没有
+// X-Zcode-* / X-Platform 等指纹，UA 是 Node 内置 fetch（undici）的默认值
+// "node"，并带 undici 默认头 accept-language: * 与 sec-fetch-mode: cors。
+//
+// 所以这里做的是「去身份化」而非「加身份」：先删除所有名字（不区分大小写）
+// 含 "zcode" 的头，再写入上述三个传输层默认头。h 为 nil 时直接返回。
+func ApplyZCodeMCPTransportHeaders(h http.Header) {
+	if h == nil {
+		return
+	}
+	for key := range h {
+		if strings.Contains(strings.ToLower(key), "zcode") {
+			delete(h, key)
+		}
+	}
+	setHeaderRaw(h, "User-Agent", "node")
+	setHeaderRaw(h, "accept-language", "*")
+	setHeaderRaw(h, "sec-fetch-mode", "cors")
 }
 
 // zcodeUserAgent 按 kind 返回对应 SDK 栈的 User-Agent（取自 ZCode v4.0.0
 // 源码：各 provider 包 withUserAgentSuffix 追加自身版本，provider-utils 再追加
-// 自身版本与 runtime/node.js/<major>）。
-func zcodeUserAgent(kind zcodeIdentityKind) string {
+// 自身版本与 runtime/node.js/<major>）。version 为本次请求取到的 ZCode 版本。
+func zcodeUserAgent(kind zcodeIdentityKind, version string) string {
 	if kind == zcodeIdentityAnthropic {
-		return "ZCode/" + zcodeAppVersion + " ai-sdk/anthropic/3.0.81 ai-sdk/provider-utils/4.0.27 runtime/node.js/24"
+		return "ZCode/" + version + " ai-sdk/anthropic/3.0.81 ai-sdk/provider-utils/4.0.27 runtime/node.js/24"
 	}
-	return "ZCode/" + zcodeAppVersion + " ai-sdk/openai-compatible/2.0.60 ai-sdk/provider-utils/4.0.39 runtime/node.js/24"
+	return "ZCode/" + version + " ai-sdk/openai-compatible/2.0.60 ai-sdk/provider-utils/4.0.39 runtime/node.js/24"
 }
 
 // zcodeSessionMaterial 拼出会话级 ID 派生的输入：账号 ID 的十进制字符串；
@@ -146,6 +216,46 @@ func zcodeSessionIDForAccount(accountID int64, sessionKey string) string {
 // X-Zcode-Trace-Id：与 session ID 同源稳定，但取值不同。
 func zcodeTraceIDForAccount(accountID int64, sessionKey string) string {
 	return uuid.NewSHA1(zcodeTraceIDNamespace, zcodeSessionMaterial(accountID, sessionKey)).String()
+}
+
+// zcodeFindHeaderValue 返回第一个名字匹配（不区分大小写）的头名与原值；
+// 找不到时都返回空字符串。
+func zcodeFindHeaderValue(h http.Header, name string) (string, string) {
+	for key, values := range h {
+		if len(values) == 0 || !strings.EqualFold(key, name) {
+			continue
+		}
+		return key, values[0]
+	}
+	return "", ""
+}
+
+// zcodeSiblingHeaderName 让补充头沿用已有鉴权头的大小写形态：兄弟头是 Go
+// canonical 形态时用 canonical，否则跟随其小写写法（与真实客户端两个头同一种
+// 写法一致）。
+func zcodeSiblingHeaderName(canonical, sibling string) string {
+	if sibling != "" && sibling != http.CanonicalHeaderKey(sibling) {
+		return strings.ToLower(canonical)
+	}
+	return canonical
+}
+
+// zcodeEnsureAnthropicDualAuth 补全 Anthropic 面的双鉴权：真实 ZCode 同时发
+// Authorization: Bearer 与 X-Api-Key。只在缺失一侧时补，不覆盖已有值；不写
+// 任何日志（避免密钥值泄漏）。
+func zcodeEnsureAnthropicDualAuth(h http.Header) {
+	authKey, authValue := zcodeFindHeaderValue(h, "authorization")
+	apiKeyKey, apiKeyValue := zcodeFindHeaderValue(h, "x-api-key")
+
+	const bearerPrefix = "bearer "
+	if apiKeyValue == "" && len(authValue) > len(bearerPrefix) && strings.EqualFold(authValue[:len(bearerPrefix)], bearerPrefix) {
+		if token := strings.TrimSpace(authValue[len(bearerPrefix):]); token != "" {
+			setHeaderRaw(h, zcodeSiblingHeaderName("X-Api-Key", authKey), token)
+		}
+	}
+	if authValue == "" && apiKeyValue != "" {
+		setHeaderRaw(h, zcodeSiblingHeaderName("Authorization", apiKeyKey), "Bearer "+apiKeyValue)
+	}
 }
 
 // zcodeFilterAnthropicBetaHeader 从 anthropic-beta 头里剥掉 Claude Code / OAuth

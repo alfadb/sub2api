@@ -14,7 +14,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// zhipu 账号出站 ZCode Desktop 指纹注入（applyZCodeIdentityHeaders）的单元回归。
+// zhipu 账号出站 ZCode Desktop 指纹注入（applyZCodeIdentityHeaders）与 MCP
+// 传输层头（ApplyZCodeMCPTransportHeaders）的单元回归。
 
 func zcodeIdentityTestAccount(platform string) *Account {
 	return &Account{
@@ -36,6 +37,7 @@ func claudeCLISampleHeaders() http.Header {
 	h.Set("X-Stainless-Runtime", "node")
 	h.Set("Accept-Language", "en-US,en;q=0.9")
 	h.Set("Sec-Fetch-Mode", "cors")
+	h.Set("Accept-Encoding", "gzip, br")
 	h.Set("anthropic-version", "2023-06-01")
 	h.Set("Authorization", "Bearer sk-test")
 	return h
@@ -54,16 +56,19 @@ func TestApplyZCodeIdentityHeaders_ZhipuOverwritesClientFingerprint(t *testing.T
 	applyZCodeIdentityHeaders(h, zcodeIdentityTestAccount(PlatformZhipu), zcodeIdentityAnthropic, "conv-1")
 
 	// claude-cli 身份被剥离 / 覆盖，UA 以 ZCode 版本开头。
-	require.True(t, strings.HasPrefix(getHeaderRaw(h, "user-agent"), "ZCode/"+zcodeAppVersion))
+	require.True(t, strings.HasPrefix(getHeaderRaw(h, "user-agent"), "ZCode/"+zcodeAppVersion()+" "))
 	require.Empty(t, getHeaderRaw(h, "x-app"))
 	require.Empty(t, getHeaderRaw(h, "x-stainless-lang"))
 	require.Empty(t, getHeaderRaw(h, "x-stainless-runtime"))
-	// 浏览器身份残留同样被剥掉。
-	require.Empty(t, getHeaderRaw(h, "accept-language"))
-	require.Empty(t, getHeaderRaw(h, "sec-fetch-mode"))
+
+	// 真实客户端 undici 的两个默认头：客户端传任意值，出站固定为 * 与 cors。
+	require.Equal(t, "*", getHeaderRaw(h, "accept-language"))
+	require.Equal(t, "cors", getHeaderRaw(h, "sec-fetch-mode"))
+	require.NotContains(t, h, "Accept-Language")
+	require.NotContains(t, h, "Sec-Fetch-Mode")
 
 	// 固定指纹头。
-	require.Equal(t, zcodeAppVersion, getHeaderRaw(h, "X-Zcode-App-Version"))
+	require.Equal(t, zcodeAppVersion(), getHeaderRaw(h, "X-Zcode-App-Version"))
 	require.Equal(t, "glm", getHeaderRaw(h, "X-Zcode-Agent"))
 	require.Equal(t, "Z Code@electron", getHeaderRaw(h, "X-Title"))
 
@@ -78,8 +83,11 @@ func TestApplyZCodeIdentityHeaders_ZhipuOverwritesClientFingerprint(t *testing.T
 	require.Equal(t, []string{"main"}, h["x-zcode-session-type"])
 	require.Equal(t, []string{"main_turn"}, h["x-zcode-query-source"])
 
-	// 不动鉴权与协议头。
+	// Anthropic 面双鉴权：已有 Authorization，补 X-Api-Key（密钥值不变）。
 	require.Equal(t, "Bearer sk-test", h.Get("Authorization"))
+	require.Equal(t, "sk-test", getHeaderRaw(h, "X-Api-Key"))
+
+	// 不动协议头。
 	require.Equal(t, "2023-06-01", getHeaderRaw(h, "anthropic-version"))
 
 	// UUID 均为合法形态。
@@ -152,33 +160,143 @@ func TestApplyZCodeIdentityHeaders_UAVariesByKind(t *testing.T) {
 	applyZCodeIdentityHeaders(hOpenAI, account, zcodeIdentityOpenAI, "conv-1")
 	applyZCodeIdentityHeaders(hAnthropic, account, zcodeIdentityAnthropic, "conv-1")
 
-	// ZCode v4.0.0 两条 SDK 栈的精确 UA。
+	// 两条 SDK 栈的精确 UA，版本号由 zcodeAppVersion() 派生。
 	require.Equal(t,
-		"ZCode/4.0.0 ai-sdk/openai-compatible/2.0.60 ai-sdk/provider-utils/4.0.39 runtime/node.js/24",
+		"ZCode/"+zcodeAppVersion()+" ai-sdk/openai-compatible/2.0.60 ai-sdk/provider-utils/4.0.39 runtime/node.js/24",
 		getHeaderRaw(hOpenAI, "User-Agent"))
 	require.Equal(t,
-		"ZCode/4.0.0 ai-sdk/anthropic/3.0.81 ai-sdk/provider-utils/4.0.27 runtime/node.js/24",
+		"ZCode/"+zcodeAppVersion()+" ai-sdk/anthropic/3.0.81 ai-sdk/provider-utils/4.0.27 runtime/node.js/24",
 		getHeaderRaw(hAnthropic, "User-Agent"))
 	require.NotEqual(t, getHeaderRaw(hOpenAI, "User-Agent"), getHeaderRaw(hAnthropic, "User-Agent"))
 }
 
-// TestApplyZCodeIdentity 覆盖 handler 包使用的导出包装：zhipu 账号改写 UA，
-// 非 zhipu 账号逐字节 no-op。
-func TestApplyZCodeIdentity(t *testing.T) {
-	t.Run("zhipu rewrites user agent", func(t *testing.T) {
-		h := claudeCLISampleHeaders()
-		zcodeIdentityTestAccount(PlatformZhipu).ApplyZCodeIdentity(h, "mcp:s1")
+// TestApplyZCodeIdentityHeaders_PlatformVersionPerAccount 平台头按账号稳定区分。
+func TestApplyZCodeIdentityHeaders_PlatformVersionPerAccount(t *testing.T) {
+	accountFor := func(id int64) *Account {
+		account := zcodeIdentityTestAccount(PlatformZhipu)
+		account.ID = id
+		return account
+	}
 
-		userAgent := getHeaderRaw(h, "user-agent")
-		require.True(t, strings.HasPrefix(userAgent, "ZCode/"+zcodeAppVersion+" "))
-		require.NotContains(t, userAgent, "claude-cli")
+	// 现有线上账号 159 继续落在原先的 25.5.0（设备指纹连续）；174 落在 25.1.0。
+	expected := map[int64]string{159: "25.5.0", 174: "25.1.0"}
+	for id, want := range expected {
+		h := http.Header{}
+		applyZCodeIdentityHeaders(h, accountFor(id), zcodeIdentityOpenAI, "conv-1")
+		require.Equal(t, "darwin-arm64", getHeaderRaw(h, "X-Platform"))
+		require.Equal(t, "macos", getHeaderRaw(h, "X-Os-Category"))
+		require.Equal(t, want, getHeaderRaw(h, "X-Os-Version"), "account %d", id)
+
+		// 同一账号再次调用：平台版本必须稳定。
+		h2 := http.Header{}
+		applyZCodeIdentityHeaders(h2, accountFor(id), zcodeIdentityAnthropic, "conv-2")
+		require.Equal(t, want, getHeaderRaw(h2, "X-Os-Version"), "account %d second call", id)
+	}
+}
+
+// TestApplyZCodeIdentityHeaders_DeletesAcceptEncoding 出站不带 Accept-Encoding，
+// 交给 Go transport 自协商压缩并自动解压。
+func TestApplyZCodeIdentityHeaders_DeletesAcceptEncoding(t *testing.T) {
+	account := zcodeIdentityTestAccount(PlatformZhipu)
+
+	hasAcceptEncoding := func(h http.Header) bool {
+		for key := range h {
+			if strings.EqualFold(key, "accept-encoding") {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("canonical and arbitrary casing are removed", func(t *testing.T) {
+		h := http.Header{}
+		h.Set("Accept-Encoding", "gzip, br")
+		h["ACCEPT-ENCODING"] = []string{"br"}
+		applyZCodeIdentityHeaders(h, account, zcodeIdentityAnthropic, "conv-1")
+		require.False(t, hasAcceptEncoding(h))
 	})
 
-	t.Run("non zhipu noop", func(t *testing.T) {
-		h := claudeCLISampleHeaders()
-		before := h.Clone()
-		zcodeIdentityTestAccount(PlatformKimi).ApplyZCodeIdentity(h, "mcp:s1")
-		require.Equal(t, before, h)
+	t.Run("absent stays absent", func(t *testing.T) {
+		h := http.Header{}
+		applyZCodeIdentityHeaders(h, account, zcodeIdentityOpenAI, "conv-1")
+		require.False(t, hasAcceptEncoding(h))
+	})
+}
+
+// TestApplyZCodeIdentityHeaders_AnthropicDualAuth Anthropic 面同时发
+// Authorization 与 X-Api-Key；只补缺失的一侧，不覆盖已有值。
+func TestApplyZCodeIdentityHeaders_AnthropicDualAuth(t *testing.T) {
+	account := zcodeIdentityTestAccount(PlatformZhipu)
+
+	t.Run("authorization only adds x-api-key", func(t *testing.T) {
+		h := http.Header{}
+		h.Set("Authorization", "Bearer sk-auth")
+		applyZCodeIdentityHeaders(h, account, zcodeIdentityAnthropic, "conv-1")
+		require.Equal(t, "Bearer sk-auth", h.Get("Authorization"))
+		require.Equal(t, []string{"sk-auth"}, h["X-Api-Key"], "新头沿用 Authorization 的 canonical 形态")
+	})
+
+	t.Run("lowercase authorization adds lowercase x-api-key", func(t *testing.T) {
+		h := http.Header{}
+		setHeaderRaw(h, "authorization", "Bearer sk-lower")
+		applyZCodeIdentityHeaders(h, account, zcodeIdentityAnthropic, "conv-1")
+		require.Equal(t, "Bearer sk-lower", getHeaderRaw(h, "authorization"))
+		require.Equal(t, []string{"sk-lower"}, h["x-api-key"], "新头沿用已有鉴权头的小写形态")
+	})
+
+	t.Run("x-api-key only adds authorization", func(t *testing.T) {
+		h := http.Header{}
+		h.Set("x-api-key", "sk-key")
+		applyZCodeIdentityHeaders(h, account, zcodeIdentityAnthropic, "conv-1")
+		require.Equal(t, "sk-key", h.Get("X-Api-Key"))
+		require.Equal(t, "Bearer sk-key", h.Get("Authorization"))
+	})
+
+	t.Run("both present are kept as-is", func(t *testing.T) {
+		h := http.Header{}
+		h.Set("Authorization", "Bearer sk-auth")
+		h.Set("X-Api-Key", "sk-key")
+		applyZCodeIdentityHeaders(h, account, zcodeIdentityAnthropic, "conv-1")
+		require.Equal(t, "Bearer sk-auth", h.Get("Authorization"))
+		require.Equal(t, "sk-key", h.Get("X-Api-Key"))
+	})
+
+	t.Run("openai face does not supplement auth", func(t *testing.T) {
+		h := http.Header{}
+		h.Set("Authorization", "Bearer sk-auth")
+		applyZCodeIdentityHeaders(h, account, zcodeIdentityOpenAI, "conv-1")
+		require.Empty(t, getHeaderRaw(h, "X-Api-Key"))
+
+		h2 := http.Header{}
+		h2.Set("x-api-key", "sk-key")
+		applyZCodeIdentityHeaders(h2, account, zcodeIdentityOpenAI, "conv-1")
+		require.Empty(t, getHeaderRaw(h2, "Authorization"))
+	})
+}
+
+// TestApplyZCodeMCPTransportHeaders 真实 ZCode 的 MCP 请求不带 ZCode 身份头，
+// UA 为 undici 默认的 node，并带 undici 默认头。
+func TestApplyZCodeMCPTransportHeaders(t *testing.T) {
+	h := http.Header{}
+	h.Set("User-Agent", "claude-cli/1.0.0 (external, cli)")
+	h.Set("X-Zcode-Agent", "glm")
+	h.Set("X-Zcode-App-Version", "4.0.0")
+	h.Set("X-Zcode-Session-Id", "sess-1")
+	h.Set("Accept-Language", "en-US,en;q=0.9")
+	h.Set("Authorization", "Bearer zp-key")
+
+	ApplyZCodeMCPTransportHeaders(h)
+
+	require.Equal(t, "node", getHeaderRaw(h, "User-Agent"))
+	require.Equal(t, "*", getHeaderRaw(h, "Accept-Language"))
+	require.Equal(t, "cors", getHeaderRaw(h, "Sec-Fetch-Mode"))
+	require.Equal(t, "Bearer zp-key", h.Get("Authorization"), "鉴权头不属于 ZCode 身份头，保留")
+	for key := range h {
+		require.NotContains(t, strings.ToLower(key), "zcode", "残留 ZCode 身份头 %q", key)
+	}
+
+	require.NotPanics(t, func() {
+		ApplyZCodeMCPTransportHeaders(nil)
 	})
 }
 

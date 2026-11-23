@@ -240,7 +240,7 @@ func TestBuildNativeAnthropicUpstreamRequest_ZhipuMimicsZCode(t *testing.T) {
 		"zhu-test", "http://anthropic.example/v1/messages")
 	require.NoError(t, err)
 
-	require.True(t, strings.HasPrefix(getHeaderRaw(req.Header, "user-agent"), "ZCode/"+zcodeAppVersion))
+	require.True(t, strings.HasPrefix(getHeaderRaw(req.Header, "user-agent"), "ZCode/"+zcodeAppVersion()))
 	require.Empty(t, getHeaderRaw(req.Header, "x-app"))
 	require.Equal(t, "glm", getHeaderRaw(req.Header, "X-Zcode-Agent"))
 }

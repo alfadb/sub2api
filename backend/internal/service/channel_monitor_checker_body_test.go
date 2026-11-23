@@ -204,12 +204,12 @@ func TestRunCheckForModel_ZhipuPresentsZCodeUserAgent(t *testing.T) {
 	if res.Status != MonitorStatusOperational {
 		t.Fatalf("zhipu check should pass challenge, got status=%s message=%q", res.Status, res.Message)
 	}
-	if userAgent := h.lastHeaders.Get("User-Agent"); !strings.HasPrefix(userAgent, "ZCode/4.0.0 ") {
+	if userAgent := h.lastHeaders.Get("User-Agent"); !strings.HasPrefix(userAgent, "ZCode/"+zcodeAppVersion()+" ") {
 		t.Errorf("zhipu monitor request should present ZCode UA, got %q", userAgent)
 	}
 	// 服务端收到的 req.Header 已被规范化，Header.Get 是大小写不敏感的。
 	for header, want := range map[string]string{
-		"X-Zcode-App-Version":  "4.0.0",
+		"X-Zcode-App-Version":  zcodeAppVersion(),
 		"X-Zcode-Session-Type": "main",
 		"X-Zcode-Query-Source": "main_turn",
 		"Http-Referer":         "https://zcode.z.ai",

@@ -103,6 +103,9 @@ const (
 	upstreamProtocolModeOpenAIH2         = "openai_h2"
 	upstreamProtocolModeOpenAIH1Fallback = "openai_h1_fallback"
 	upstreamProtocolModeGrok             = "grok"
+	// upstreamProtocolModeZhipuH1 强制智谱官方域的出站请求只走 HTTP/1.1：
+	// 对齐真实 ZCode Desktop 客户端（Node 内置 fetch / undici，仅 HTTP/1.1）的出站协议。
+	upstreamProtocolModeZhipuH1 = "zhipu_h1"
 )
 
 var errUpstreamClientLimitReached = errors.New("upstream client cache limit reached")
@@ -208,9 +211,11 @@ func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID i
 	if req != nil {
 		profile = service.HTTPUpstreamProfileFromContext(req.Context())
 	}
+	// 智谱官方域强制只走 HTTP/1.1；其它主机沿用 profile 解析出的协议模式。
+	protocolModeOverride := effectiveUpstreamProtocolMode(req, "")
 
 	// 获取或创建对应的客户端，并标记请求占用
-	entry, err := s.acquireClientWithProfile(proxyURL, accountID, accountConcurrency, profile)
+	entry, err := s.acquireClientWithProfileAndProtocolMode(proxyURL, accountID, accountConcurrency, profile, protocolModeOverride)
 	if err != nil {
 		return nil, err
 	}
@@ -236,6 +241,18 @@ func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID i
 	})
 
 	return resp, nil
+}
+
+// effectiveUpstreamProtocolMode 返回本次请求实际使用的上游协议模式。
+// 智谱官方域（bigmodel.cn / z.ai 及其子域）强制只走 HTTP/1.1，对齐真实 ZCode
+// Desktop 客户端（Node 内置 fetch / undici，仅 HTTP/1.1）的出站协议。
+// resolvedMode 是按 profile 解析出的原模式，空串表示尚未解析
+// （由 getClientEntryWithProtocolMode 继续解析）。
+func effectiveUpstreamProtocolMode(req *http.Request, resolvedMode string) string {
+	if req != nil && service.IsZhipuOfficialHost(req.URL) {
+		return upstreamProtocolModeZhipuH1
+	}
+	return resolvedMode
 }
 
 // DoWithTLS 执行带 TLS 指纹伪装的 HTTP 请求
@@ -697,7 +714,13 @@ func (s *httpUpstreamService) acquireClient(proxyURL string, accountID int64, ac
 
 // acquireClientWithProfile 获取或创建客户端，并按请求 profile 选择协议策略。
 func (s *httpUpstreamService) acquireClientWithProfile(proxyURL string, accountID int64, accountConcurrency int, profile service.HTTPUpstreamProfile) (*upstreamClientEntry, error) {
-	return s.getClientEntry(proxyURL, accountID, accountConcurrency, profile, true, true)
+	return s.acquireClientWithProfileAndProtocolMode(proxyURL, accountID, accountConcurrency, profile, "")
+}
+
+// acquireClientWithProfileAndProtocolMode 与 acquireClientWithProfile 相同，但允许
+// 调用方用非空的 protocolModeOverride 覆盖本次请求的协议模式（连接池设置仍按 profile）。
+func (s *httpUpstreamService) acquireClientWithProfileAndProtocolMode(proxyURL string, accountID int64, accountConcurrency int, profile service.HTTPUpstreamProfile, protocolModeOverride string) (*upstreamClientEntry, error) {
+	return s.getClientEntryWithProtocolMode(proxyURL, accountID, accountConcurrency, profile, protocolModeOverride, true, true)
 }
 
 // getOrCreateClient 获取或创建客户端
@@ -723,6 +746,12 @@ func (s *httpUpstreamService) getOrCreateClient(proxyURL string, accountID int64
 // markInFlight=true 时会标记进行中请求，用于请求路径防止被淘汰
 // enforceLimit=true 时会限制客户端数量，超限且无法淘汰时返回错误
 func (s *httpUpstreamService) getClientEntry(proxyURL string, accountID int64, accountConcurrency int, profile service.HTTPUpstreamProfile, markInFlight bool, enforceLimit bool) (*upstreamClientEntry, error) {
+	return s.getClientEntryWithProtocolMode(proxyURL, accountID, accountConcurrency, profile, "", markInFlight, enforceLimit)
+}
+
+// getClientEntryWithProtocolMode 与 getClientEntry 相同，但 protocolModeOverride
+// 非空时直接作为本次请求的协议模式（不再按 profile 解析），缓存键与连接池键随之隔离。
+func (s *httpUpstreamService) getClientEntryWithProtocolMode(proxyURL string, accountID int64, accountConcurrency int, profile service.HTTPUpstreamProfile, protocolModeOverride string, markInFlight bool, enforceLimit bool) (*upstreamClientEntry, error) {
 	// 获取隔离模式
 	isolation := s.getIsolationMode()
 	// 标准化代理 URL 并解析
@@ -730,8 +759,11 @@ func (s *httpUpstreamService) getClientEntry(proxyURL string, accountID int64, a
 	if err != nil {
 		return nil, err
 	}
-	// 根据请求 profile（例如 OpenAI）选择协议模式
-	protocolMode := s.resolveProtocolMode(profile, proxyKey, parsedProxy)
+	// 根据请求 profile（例如 OpenAI）选择协议模式；显式覆盖优先
+	protocolMode := protocolModeOverride
+	if protocolMode == "" {
+		protocolMode = s.resolveProtocolMode(profile, proxyKey, parsedProxy)
+	}
 	settings := s.resolvePoolSettings(isolation, accountConcurrency)
 	settings = s.applyProfilePoolSettings(settings, profile)
 	// 构建缓存键（根据隔离策略不同）
@@ -1416,6 +1448,10 @@ func buildUpstreamTransport(settings poolSettings, proxyURL *url.URL, protocolMo
 		transport.TLSNextProto = make(map[string]func(string, *tls.Conn) http.RoundTripper)
 	case upstreamProtocolModeOpenAIH1Fallback:
 		// 显式禁用 HTTP/2，确保代理不兼容场景回退到 HTTP/1.1。
+		transport.ForceAttemptHTTP2 = false
+		transport.TLSNextProto = make(map[string]func(string, *tls.Conn) http.RoundTripper)
+	case upstreamProtocolModeZhipuH1:
+		// 智谱官方域对齐真实 ZCode Desktop 客户端的 HTTP/1.1 出站。
 		transport.ForceAttemptHTTP2 = false
 		transport.TLSNextProto = make(map[string]func(string, *tls.Conn) http.RoundTripper)
 	}

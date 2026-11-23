@@ -15,12 +15,19 @@ import (
 )
 
 // swapMonitorHTTPClient 临时替换 monitorHTTPClient 为不带 SSRF 校验的普通 client，
-// 让 httptest (127.0.0.1) 能连通。测试结束后恢复。
+// 让 httptest (127.0.0.1) 能连通。智谱官方域专用的 HTTP/1.1 client 一并替换，
+// 保证替换手法对官方域目标同样生效。测试结束后恢复。
 func swapMonitorHTTPClient(t *testing.T) {
 	t.Helper()
 	orig := monitorHTTPClient
-	monitorHTTPClient = &http.Client{Timeout: 5 * time.Second}
-	t.Cleanup(func() { monitorHTTPClient = orig })
+	origH1 := monitorHTTP1Client
+	plain := &http.Client{Timeout: 5 * time.Second}
+	monitorHTTPClient = plain
+	monitorHTTP1Client = plain
+	t.Cleanup(func() {
+		monitorHTTPClient = orig
+		monitorHTTP1Client = origH1
+	})
 }
 
 // captureHandler 把每次收到的请求 body 和 headers 存起来，测试断言用。

@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,18 +25,57 @@ var monitorHTTPClient = newSSRFSafeHTTPClient(monitorRequestTimeout)
 // monitorPingHTTPClient 用于 endpoint origin 的 HEAD ping，超时更短。
 var monitorPingHTTPClient = newSSRFSafeHTTPClient(monitorPingTimeout)
 
+// monitorHTTP1Client 是智谱官方域专用的仅 HTTP/1.1 版本，对齐真实 ZCode Desktop
+// 客户端（Node 内置 fetch / undici，仅 HTTP/1.1）的出站协议。
+var monitorHTTP1Client = newSSRFSafeHTTP1Client(monitorRequestTimeout)
+
+// monitorPingHTTP1Client 是智谱官方域 HEAD 探活用的仅 HTTP/1.1 版本。
+var monitorPingHTTP1Client = newSSRFSafeHTTP1Client(monitorPingTimeout)
+
 // newSSRFSafeHTTPClient 返回一个使用 safeDialContext 的 http.Client。
 // 仅供监控模块对外发起请求使用——所有目标都应是公网 endpoint。
 func newSSRFSafeHTTPClient(timeout time.Duration) *http.Client {
+	return &http.Client{Timeout: timeout, Transport: servertiming.WrapRoundTripper(newSSRFSafeTransport(true))}
+}
+
+// newSSRFSafeHTTP1Client 返回只协商 HTTP/1.1 的 SSRF 安全 client。
+func newSSRFSafeHTTP1Client(timeout time.Duration) *http.Client {
+	return &http.Client{Timeout: timeout, Transport: servertiming.WrapRoundTripper(newSSRFSafeTransport(false))}
+}
+
+// newSSRFSafeTransport 构建监控使用的 SSRF 安全 Transport。
+// allowHTTP2=false 时禁用 H2 自动协商：与 httpUpstream 的 openai_h1 分支一致，
+// ForceAttemptHTTP2=false 且 TLSNextProto 为非 nil 空 map。
+func newSSRFSafeTransport(allowHTTP2 bool) *http.Transport {
 	tr := &http.Transport{
 		DialContext:           safeDialContext,
-		ForceAttemptHTTP2:     true,
+		ForceAttemptHTTP2:     allowHTTP2,
 		MaxIdleConns:          16,
 		IdleConnTimeout:       monitorIdleConnTimeout,
 		TLSHandshakeTimeout:   monitorTLSHandshakeTimeout,
 		ResponseHeaderTimeout: monitorResponseHeaderTimeout,
 	}
-	return &http.Client{Timeout: timeout, Transport: servertiming.WrapRoundTripper(tr)}
+	if !allowHTTP2 {
+		tr.TLSNextProto = make(map[string]func(string, *tls.Conn) http.RoundTripper)
+	}
+	return tr
+}
+
+// monitorClientForURL 为一次监控请求选择 http.Client：智谱官方域只走 HTTP/1.1，
+// 其余目标沿用共享 client。
+func monitorClientForURL(u *url.URL) *http.Client {
+	if IsZhipuOfficialHost(u) {
+		return monitorHTTP1Client
+	}
+	return monitorHTTPClient
+}
+
+// monitorPingClientForURL 为 HEAD 探活选择 http.Client，规则同上。
+func monitorPingClientForURL(u *url.URL) *http.Client {
+	if IsZhipuOfficialHost(u) {
+		return monitorPingHTTP1Client
+	}
+	return monitorPingHTTPClient
 }
 
 // CheckOptions 承载一次检测的自定义入参。
@@ -139,7 +179,7 @@ func pingEndpointOrigin(ctx context.Context, endpoint string) *int {
 		return nil
 	}
 	start := time.Now()
-	resp, err := monitorPingHTTPClient.Do(req)
+	resp, err := monitorPingClientForURL(req.URL).Do(req)
 	if err != nil {
 		return nil
 	}
@@ -565,7 +605,7 @@ func postRawJSON(ctx context.Context, fullURL string, payload []byte, headers ma
 		req.Header.Set(k, v)
 	}
 
-	resp, err := monitorHTTPClient.Do(req)
+	resp, err := monitorClientForURL(req.URL).Do(req)
 	if err != nil {
 		return nil, 0, fmt.Errorf("do request: %w", err)
 	}
@@ -593,13 +633,19 @@ func monitorRequestPath(provider, endpoint string, adapter providerAdapter, mode
 	if strings.Contains(u.EscapedPath(), "/paas/v4") {
 		return "/chat/completions"
 	}
-	if isZhipuOfficialHost(u) {
+	if IsZhipuOfficialHost(u) {
 		return adapter.buildPath(model)
 	}
 	return providerOpenAIPath
 }
 
-func isZhipuOfficialHost(u *url.URL) bool {
+// IsZhipuOfficialHost 判断 URL 是否指向智谱官方域（bigmodel.cn / z.ai 及其子域）。
+// 只做完整域名匹配：先比相等，再比 "." + 官方域的严格后缀，避免
+// bigmodel.cn.evil.com / notbigmodel.cn 之类的伪装域名命中。
+func IsZhipuOfficialHost(u *url.URL) bool {
+	if u == nil {
+		return false
+	}
 	host := strings.ToLower(u.Hostname())
 	for _, official := range []string{"bigmodel.cn", "z.ai"} {
 		if host == official || strings.HasSuffix(host, "."+official) {

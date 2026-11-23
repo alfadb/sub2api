@@ -227,7 +227,7 @@ func (s *OpenAIGatewayService) buildNativeAnthropicUpstreamRequest(
 	applyOpenCodeUpstreamUserAgent(account, targetURL, req.Header)
 	// zhipu 账号统一为 ZCode Desktop 客户端指纹：盖过 claude-cli 等残留身份头
 	// （header_overrides 仍可再覆盖）。
-	applyZCodeIdentityHeaders(req.Header, account, zcodeIdentityAnthropic)
+	applyZCodeIdentityHeaders(req.Header, account, zcodeIdentityAnthropic, zcodeConversationKey(c, body))
 
 	// 账号级请求头覆写（最终生效，覆盖上面所有来源的同名头）
 	account.ApplyHeaderOverrides(req.Context(), req.Header)

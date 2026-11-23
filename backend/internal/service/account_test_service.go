@@ -2159,7 +2159,7 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 	// 官方 OpenCode / Command Code 上游收敛为规范客户端 UA，与真实转发路径一致。
 	applyOpenCodeUpstreamUserAgent(account, apiURL, req.Header)
 	// zhipu 账号统一为 ZCode Desktop 客户端指纹（header_overrides 仍可再覆盖）。
-	applyZCodeIdentityHeaders(req.Header, account, zcodeIdentityOpenAI)
+	applyZCodeIdentityHeaders(req.Header, account, zcodeIdentityOpenAI, "probe")
 
 	// 账号级请求头覆写：测试请求与真实转发保持一致的最终头
 	account.ApplyHeaderOverrides(req.Context(), req.Header)

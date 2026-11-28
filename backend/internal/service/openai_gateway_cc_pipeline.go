@@ -222,6 +222,8 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequest(
 	// 字段，上游 400 "The `reasoning_content` in the thinking mode must be
 	// passed back to the API"。在共用出站点补空格占位，真实明文不覆盖。
 	body = ensureDeepSeekChatReasoningPlaceholders(account, body)
+	// AI Studio rejects replayed tool calls without a Gemini thought signature.
+	body = ensureGeminiChatThoughtSignatures(account, body)
 	// Ollama Cloud 请求期定价预检（raw CC 出站）：未定价模型在任何上游 I/O 之前
 	// 显式 400，且 400 已由 helper 写出。非 failover 错误 ⇒ 不换号、不写账号处置。
 	if err := s.enforceOllamaCloudRequestPricingPreflight(ctx, c, account, body); err != nil {

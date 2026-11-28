@@ -1249,6 +1249,8 @@ func buildOpenAIAPIKeyModelsRequest(ctx context.Context, account *Account, valid
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+apiKey)
+	// 智谱账号：模型列表探测同样伪装 ZCode 客户端（无入站请求，用固定哨兵会话键）。
+	applyZCodeIdentityHeaders(req.Header, account, zcodeIdentityOpenAI, "models")
 	// 账号级请求头覆写：模型列表探测与真实转发保持一致的最终头
 	account.ApplyHeaderOverrides(withoutHeaderOverrideRequestScope(req.Context()), req.Header)
 	return req, nil

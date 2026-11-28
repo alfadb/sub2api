@@ -33,13 +33,16 @@ func ClaudeCodeSessionIDFromHeader(c *gin.Context) string {
 }
 
 // ExtractClientSessionID resolves the explicit client-provided session identifier from
-// request headers for usage-log correlation and returns it sanitized. It is
-// protocol-agnostic and shared by every gateway handler so all supported protocols
-// record session_id through one seam. Returns "" when no valid identifier is present.
+// request headers and returns it sanitized. It is protocol-agnostic and shared by every
+// gateway handler so all supported protocols record session_id through one seam.
+// Besides usage-log correlation it is the highest-priority input to
+// zcodeConversationKey, which derives the session-scoped upstream client identity
+// (X-Session-Id / X-Zcode-Trace-Id) for zhipu ZCode mimicry. Returns "" when no valid
+// identifier is present.
 //
-// This value feeds only usage_logs.session_id persistence. It does NOT affect sticky
-// routing, account selection, request_id semantics, or upstream prompt caching, which
-// keep their own (intentionally broader) session-signal resolution.
+// This value feeds usage_logs.session_id persistence and that ZCode identity derivation.
+// It does NOT affect sticky routing, account selection, request_id semantics, or upstream
+// prompt caching, which keep their own (intentionally broader) session-signal resolution.
 func ExtractClientSessionID(c *gin.Context) string {
 	if c == nil || c.Request == nil {
 		return ""

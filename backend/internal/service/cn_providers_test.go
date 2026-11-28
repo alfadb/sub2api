@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -476,6 +477,29 @@ func TestZhipuQuotaHost(t *testing.T) {
 	require.Equal(t, "https://api.z.ai", zhipuQuotaHost("https://api.z.ai/api/paas/v4"))
 	require.Equal(t, "https://open.bigmodel.cn", zhipuQuotaHost("https://custom.example.com")) // 默认国内站
 	require.Equal(t, "https://open.bigmodel.cn/api/monitor/usage/quota/limit", zhipuQuotaURL("https://open.bigmodel.cn/api/paas/v4"))
+}
+
+// TestCNProviderQuotaService_ZhipuProbePresentsZCodeIdentity 智谱额度探测（coding plan
+// GET 端点）也必须按 ZCode 客户端身份出站。复用 kimiQuotaTestUpstream 捕获出站
+// 请求；响应体是否被解析成额度窗口不在本用例断言范围。
+func TestCNProviderQuotaService_ZhipuProbePresentsZCodeIdentity(t *testing.T) {
+	repo := &kimiQuotaTestRepo{fakeCNProbeAccountRepo: fakeCNProbeAccountRepo{account: &Account{
+		ID: 1, Platform: PlatformZhipu, Type: AccountTypeAPIKey, Status: StatusActive,
+		Credentials: map[string]any{
+			"account_mode": AccountModeCoding,
+			"api_key":      "test-only-placeholder",
+			"base_url":     "https://open.bigmodel.cn/api/coding/paas/v4",
+		},
+	}}}
+	upstream := &kimiQuotaTestUpstream{}
+	svc := NewCNProviderQuotaService(repo, nil, upstream, cnProbeAllowlistConfig("open.bigmodel.cn"))
+
+	_, err := svc.QueryUsage(context.Background(), 1)
+	require.NoError(t, err)
+	require.NotNil(t, upstream.request)
+	require.True(t,
+		strings.HasPrefix(upstream.request.Header.Get("User-Agent"), "ZCode/"+zcodeAppVersion()+" "),
+		"zhipu quota probe should present ZCode UA, got %q", upstream.request.Header.Get("User-Agent"))
 }
 
 // TestKimiQuotaURL 两种协议默认 base（coding/v1 与 coding）都归一到 /coding/v1/usages

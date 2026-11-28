@@ -97,6 +97,7 @@ func TestBuildUpstreamTransport_NegotiatesExpectedProtocol(t *testing.T) {
 		{upstreamProtocolModeGrok, 1},
 		{upstreamProtocolModeOpenAIH1, 1},
 		{upstreamProtocolModeOpenAIH1Fallback, 1},
+		{upstreamProtocolModeZhipuH1, 1},
 	} {
 		t.Run(tc.mode, func(t *testing.T) {
 			tr, err := buildUpstreamTransport(http2KeepAliveTestPoolSettings(), nil, tc.mode)

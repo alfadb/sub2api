@@ -15,12 +15,19 @@ import (
 )
 
 // swapMonitorHTTPClient 临时替换 monitorHTTPClient 为不带 SSRF 校验的普通 client，
-// 让 httptest (127.0.0.1) 能连通。测试结束后恢复。
+// 让 httptest (127.0.0.1) 能连通。智谱官方域专用的 HTTP/1.1 client 一并替换，
+// 保证替换手法对官方域目标同样生效。测试结束后恢复。
 func swapMonitorHTTPClient(t *testing.T) {
 	t.Helper()
 	orig := monitorHTTPClient
-	monitorHTTPClient = &http.Client{Timeout: 5 * time.Second}
-	t.Cleanup(func() { monitorHTTPClient = orig })
+	origH1 := monitorHTTP1Client
+	plain := &http.Client{Timeout: 5 * time.Second}
+	monitorHTTPClient = plain
+	monitorHTTP1Client = plain
+	t.Cleanup(func() {
+		monitorHTTPClient = orig
+		monitorHTTP1Client = origH1
+	})
 }
 
 // captureHandler 把每次收到的请求 body 和 headers 存起来，测试断言用。
@@ -192,6 +199,46 @@ func TestRunCheckForModel_OpenAI_DefaultChatRequest(t *testing.T) {
 	}
 	if h.lastHeaders.Get("Authorization") != "Bearer sk-openai" {
 		t.Errorf("expected bearer auth header, got %q", h.lastHeaders.Get("Authorization"))
+	}
+}
+
+func TestRunCheckForModel_ZhipuPresentsZCodeUserAgent(t *testing.T) {
+	h := &openAICaptureHandler{}
+	endpoint := setupFakeOpenAI(t, h)
+
+	res := runCheckForModel(context.Background(), MonitorProviderZhipu, endpoint, "zp-key", "glm-4.6", nil)
+
+	if res.Status != MonitorStatusOperational {
+		t.Fatalf("zhipu check should pass challenge, got status=%s message=%q", res.Status, res.Message)
+	}
+	if userAgent := h.lastHeaders.Get("User-Agent"); !strings.HasPrefix(userAgent, "ZCode/"+zcodeAppVersion()+" ") {
+		t.Errorf("zhipu monitor request should present ZCode UA, got %q", userAgent)
+	}
+	// 服务端收到的 req.Header 已被规范化，Header.Get 是大小写不敏感的。
+	for header, want := range map[string]string{
+		"X-Zcode-App-Version":  zcodeAppVersion(),
+		"X-Zcode-Session-Type": "main",
+		"X-Zcode-Query-Source": "main_turn",
+		"Http-Referer":         "https://zcode.z.ai",
+	} {
+		if got := h.lastHeaders.Get(header); got != want {
+			t.Errorf("upstream header %s = %q, want %q", header, got, want)
+		}
+	}
+	if sessionID := h.lastHeaders.Get("X-Session-Id"); sessionID == "" {
+		t.Error("upstream X-Session-Id should not be empty")
+	}
+	// 字面大小写键（HTTP-Referer / x-zcode-*）曾被 http.Header.Get 回填成空串；
+	// 这里兜底禁止任何名字含 zcode 的头带空值出站。
+	for name, values := range h.lastHeaders {
+		if !strings.Contains(strings.ToLower(name), "zcode") {
+			continue
+		}
+		for _, value := range values {
+			if strings.TrimSpace(value) == "" {
+				t.Errorf("upstream zcode header %s leaked empty value %q", name, values)
+			}
+		}
 	}
 }
 

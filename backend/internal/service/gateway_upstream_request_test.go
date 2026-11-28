@@ -56,6 +56,51 @@ func TestGatewayBuildUpstreamRequestRejectsForeignOAuthWithoutPenalty(t *testing
 	require.Equal(t, anthropicMessagesForeignOAuthReason, failoverErr.Reason)
 }
 
+// Scenario: generic Anthropic 链（buildUpstreamRequest）对 zhipu 账号也必须把
+// 上游请求头改成 ZCode Desktop 指纹：最终 beta 已写入、session 头已同步后注入，
+// 账号 header_overrides 仍是最后一步。
+func TestBuildUpstreamRequest_ZhipuPresentsZCodeIdentity(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	req.Header.Set("User-Agent", "claude-cli/1.0.0 (external, cli)")
+	req.Header.Set("x-app", "cli")
+	req.Header.Set("anthropic-beta", "claude-code-20250219,context-1m-2025-08-07")
+	req.Header.Set("accept-language", "en-US")
+	req.Header.Set("x-claude-code-session-id", "abc")
+	c.Request = req
+
+	account := &Account{
+		ID:       4105,
+		Platform: PlatformZhipu,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":  "sk-test",
+			"base_url": "https://open.bigmodel.cn/api/anthropic",
+		},
+	}
+	body := []byte(`{"model":"glm-4.7","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`)
+
+	svc := &GatewayService{cfg: rawChatCompletionsTestConfig()}
+	upstreamReq, _, err := svc.buildUpstreamRequest(
+		context.Background(), c, account, body, "sk-test", "api_key",
+		"glm-4.7", false, false,
+	)
+	require.NoError(t, err)
+
+	require.Equal(t,
+		"ZCode/"+zcodeAppVersion()+" ai-sdk/anthropic/3.0.81 ai-sdk/provider-utils/4.0.27 runtime/node.js/24",
+		getHeaderRaw(upstreamReq.Header, "user-agent"))
+	require.Empty(t, getHeaderRaw(upstreamReq.Header, "x-app"))
+	// undici 默认头：客户端传 en-US，出站固定为 *。
+	require.Equal(t, "*", getHeaderRaw(upstreamReq.Header, "accept-language"))
+	require.Equal(t, "cors", getHeaderRaw(upstreamReq.Header, "sec-fetch-mode"))
+	require.Equal(t, "context-1m-2025-08-07", getHeaderRaw(upstreamReq.Header, "anthropic-beta"))
+	require.Equal(t, zcodeAppVersion(), getHeaderRaw(upstreamReq.Header, "X-Zcode-App-Version"))
+	require.Equal(t, zcodeSessionIDForAccount(account.ID, "abc"),
+		getHeaderRaw(upstreamReq.Header, "X-Session-Id"))
+}
+
 // Scenario: count_tokens 对不匹配凭据按「平台不支持」返回 404，不取 token、不出站
 func TestForwardCountTokensRejectsForeignOAuthAsUnsupported(t *testing.T) {
 	gin.SetMode(gin.TestMode)

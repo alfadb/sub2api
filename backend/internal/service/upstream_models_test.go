@@ -425,6 +425,23 @@ func TestBuildUpstreamModelsRequestsForAPIKeyAccounts(t *testing.T) {
 	require.Equal(t, "antigravity-key", antigravityReq.Header.Get("x-api-key"))
 }
 
+// Scenario: 智谱模型列表探测（共享 OpenAI API-Key 构造器）同样按 ZCode 客户端
+// 身份出站，避免旁路探测仍以裸 Go / OpenAI 客户端身份出现。
+func TestBuildOpenAIAPIKeyModelsRequest_ZhipuPresentsZCodeIdentity(t *testing.T) {
+	svc := &AccountTestService{cfg: upstreamModelSyncTestConfig()}
+	req, err := svc.buildOpenAIUpstreamModelsRequest(context.Background(), &Account{
+		ID:       4105,
+		Platform: PlatformZhipu,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":  "sk-test",
+			"base_url": "https://open.bigmodel.cn/api/coding/paas/v4",
+		},
+	})
+	require.NoError(t, err)
+	require.True(t, strings.HasPrefix(getHeaderRaw(req.Header, "user-agent"), "ZCode/"+zcodeAppVersion()+" "))
+}
+
 func TestBuildUpstreamModelsRequestSupportsGrokOAuth(t *testing.T) {
 	t.Parallel()
 
